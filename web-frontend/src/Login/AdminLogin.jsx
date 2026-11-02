@@ -24,8 +24,9 @@ const AdminLogin = () => {
   const navigate = useNavigate();
   const { request } = useApi();
   const { login } = useAuth();
-  const text = translations[language].auth.adminLogin;
-  const common = translations[language].common;
+  const activeTranslations = translations[language] || translations.en;
+  const text = activeTranslations.auth?.adminLogin || translations.en.auth.adminLogin;
+  const common = activeTranslations.common || translations.en.common;
 
   const handleSubmit = async (e) => {
     e.preventDefault();

@@ -84,8 +84,9 @@ export default function LandingPage() {
   const [language] = useLanguagePreference();
   const navigate = useNavigate();
   const { hash } = useLocation();
-  const t = translations[language].landing;
-  const common = translations[language].common;
+  const activeTranslations = translations[language] || translations.en;
+  const t = activeTranslations.landing || translations.en.landing;
+  const common = activeTranslations.common || translations.en.common;
 
   // Scroll depth tracking for smooth parallax interactions
   useEffect(() => {

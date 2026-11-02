@@ -181,8 +181,9 @@ const UserLogin = () => {
   const navigate = useNavigate();
   const { request } = useApi();
   const { login } = useAuth();
-  const text = translations[language].auth.userLogin;
-  const common = translations[language].common;
+  const activeTranslations = translations[language] || translations.en;
+  const text = activeTranslations.auth?.userLogin || translations.en.auth.userLogin;
+  const common = activeTranslations.common || translations.en.common;
   const featureList = language === "tl"
     ? [
         "Real-time Inventory Monitoring",

@@ -31,7 +31,8 @@ export default function LandingFooter() {
   const navigate = useNavigate();
   const location = useLocation();
   const [language] = useLanguagePreference();
-  const t = translations[language].landing.footer;
+  const activeTranslations = translations[language] || translations.en;
+  const t = activeTranslations.landing?.footer || translations.en.landing.footer;
 
   const scrollTo = (id) => {
     if (location.pathname === "/") {
@@ -84,7 +85,7 @@ export default function LandingFooter() {
 
         <div className="flex flex-wrap gap-4 sm:gap-6 text-xs sm:text-sm font-medium">
           <button onClick={() => navigate('/partner-with-us')} className="text-white/90 hover:text-white dark:text-gray-300 dark:hover:text-emerald-400 transition-colors cursor-pointer">
-            {translations[language].common.partnerWithUs}
+            {activeTranslations.common?.partnerWithUs || translations.en.common.partnerWithUs}
           </button>
           <button onClick={() => navigate('/contact-support')} className="text-white/90 hover:text-white dark:text-gray-300 dark:hover:text-emerald-400 transition-colors cursor-pointer">
             {t.helpSupport}

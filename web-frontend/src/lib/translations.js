@@ -1,4 +1,9 @@
 import React from "react";
+import {
+  farmerCebTranslations,
+  farmerHilTranslations,
+  farmerIloTranslations,
+} from "./farmerTranslations.generated.js";
 
 export const translations = {
   en: {
@@ -1055,13 +1060,95 @@ export const translations = {
   },
 };
 
+// Regional language extensions inherit base Tagalog & English structures so non-farmer pages (Landing, Login, etc.) never encounter undefined properties
+translations.ceb = {
+  ...translations.tl,
+  common: {
+    ...translations.tl.common,
+    officialPortal: "Opisyal nga Portal sa GrainRise",
+    helpSupport: "Tabang ug Suporta",
+    home: "Panimalay",
+    stakeholders: "Mga Stakeholder",
+    explore: "Susiha ang GrainRise",
+    login: "Mo-log In",
+    partnerWithUs: "Pakig-partner Kanamo",
+    register: "Magparehistro",
+    rememberMe: "Hinumdumi Ko",
+    forgotPassword: "Nakalimot sa Password?",
+    backToHome: "Balik sa Panimalay",
+    language: "Pinulongan",
+    english: "English",
+    tagalog: "Tagalog",
+    cebuano: "Cebuano",
+    hiligaynon: "Hiligaynon",
+    ilocano: "Ilokano",
+    openMenu: "Ablihi ang menu",
+    toggleTheme: "Ilisi ang tema",
+  },
+  farmer: farmerCebTranslations,
+};
+
+translations.hil = {
+  ...translations.tl,
+  common: {
+    ...translations.tl.common,
+    officialPortal: "Opisyal nga Portal sang GrainRise",
+    helpSupport: "Bulig kag Suporta",
+    home: "Puno",
+    stakeholders: "Mga Stakeholder",
+    explore: "Usisaa ang GrainRise",
+    login: "Mag-log In",
+    partnerWithUs: "Mag-upod sa Amu",
+    register: "Magparehistro",
+    rememberMe: "Dumduma Ako",
+    forgotPassword: "Nalipatan ang Password?",
+    backToHome: "Balik sa Puno",
+    language: "Hambal",
+    english: "English",
+    tagalog: "Tagalog",
+    cebuano: "Cebuano",
+    hiligaynon: "Hiligaynon",
+    ilocano: "Ilokano",
+    openMenu: "Buksi ang menu",
+    toggleTheme: "Ilisi ang tema",
+  },
+  farmer: farmerHilTranslations,
+};
+
+translations.ilo = {
+  ...translations.tl,
+  common: {
+    ...translations.tl.common,
+    officialPortal: "Opisial a Portal ti GrainRise",
+    helpSupport: "Tulong ken Suporta",
+    home: "Pagtaengan",
+    stakeholders: "Dagiti Stakeholder",
+    explore: "Tuklasen ti GrainRise",
+    login: "Ag-log In",
+    partnerWithUs: "Makipag-partner Kadakami",
+    register: "Agrehistro",
+    rememberMe: "Laglagipennak",
+    forgotPassword: "Nalipatan ti Password?",
+    backToHome: "Agsubli iti Pagtaengan",
+    language: "Pagsasao",
+    english: "English",
+    tagalog: "Tagalog",
+    cebuano: "Cebuano",
+    hiligaynon: "Hiligaynon",
+    ilocano: "Ilokano",
+    openMenu: "Lukatan ti menu",
+    toggleTheme: "Sukatan ti tema",
+  },
+  farmer: farmerIloTranslations,
+};
+
 export const getPreferredLanguage = () => {
   if (typeof window === "undefined") {
     return "en";
   }
 
   const saved = localStorage.getItem("grainrise-language");
-  return saved === "tl" ? "tl" : "en";
+  return ["en", "tl", "ceb", "hil", "ilo"].includes(saved) ? saved : "en";
 };
 
 export const setPreferredLanguage = (language) => {
@@ -1069,7 +1156,8 @@ export const setPreferredLanguage = (language) => {
     return;
   }
 
-  const nextLanguage = language === "tl" ? "tl" : "en";
+  const allowed = ["en", "tl", "ceb", "hil", "ilo"];
+  const nextLanguage = allowed.includes(language) ? language : "en";
   localStorage.setItem("grainrise-language", nextLanguage);
   window.dispatchEvent(new Event("grainrise-language-change"));
 };
@@ -1078,7 +1166,8 @@ export const useLanguagePreference = () => {
   const [language, setLanguage] = React.useState(getPreferredLanguage);
 
   const updateLanguage = (nextLanguage) => {
-    const normalized = nextLanguage === "tl" ? "tl" : "en";
+    const allowed = ["en", "tl", "ceb", "hil", "ilo"];
+    const normalized = allowed.includes(nextLanguage) ? nextLanguage : "en";
     setLanguage(normalized);
     setPreferredLanguage(normalized);
   };

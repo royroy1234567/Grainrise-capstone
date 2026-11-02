@@ -19,6 +19,7 @@ import {
   Languages,
   LogOut,
   AlertCircle,
+  Check,
 } from "lucide-react";
 
 import { translations, useLanguagePreference } from "../../lib/translations";
@@ -777,6 +778,8 @@ const UserNavbar = ({
     setMenuOpen,
   ] = useState(false);
 
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
+
 
   const [
     notificationOpen,
@@ -795,7 +798,14 @@ const UserNavbar = ({
   const languageOptions = [
     { code: "en", label: "English", flag: "🇺🇸" },
     { code: "tl", label: "Tagalog", flag: "🇵🇭" },
+    { code: "ceb", label: "Cebuano", flag: "🇵🇭" },
+    { code: "hil", label: "Hiligaynon", flag: "🇵🇭" },
+    { code: "ilo", label: "Ilokano", flag: "🇵🇭" },
   ];
+
+  const currentLanguageOption =
+    languageOptions.find((opt) => opt.code === language) ||
+    languageOptions[0];
 
 
   // =========================================================
@@ -1058,12 +1068,28 @@ const UserNavbar = ({
   const handleLanguageChange = (nextLanguage) => {
     if (nextLanguage === language) return;
 
-    const nextLabel = nextLanguage === "tl" ? "Tagalog" : "English";
+    const languageLabels = {
+      en: "English",
+      tl: "Tagalog",
+      ceb: "Cebuano",
+      hil: "Hiligaynon",
+      ilo: "Ilokano",
+    };
+    const nextLabel = languageLabels[nextLanguage] || "English";
 
     setLanguage(nextLanguage);
     showToast({
       type: "success",
-      title: language === "tl" ? "Binago ang wika" : "Language updated",
+      title:
+        language === "tl"
+          ? "Binago ang wika"
+          : language === "ceb"
+          ? "Giusab ang pinulongan"
+          : language === "hil"
+          ? "Gin-islan ang pulong"
+          : language === "ilo"
+          ? "Nasukat ti pagsasao"
+          : "Language updated",
       message: `Language set to ${nextLabel}.`,
       duration: 2200,
     });
@@ -1086,9 +1112,8 @@ const UserNavbar = ({
               event.target
             )
           ) {
-            setMenuOpen(
-              false
-            );
+            setMenuOpen(false);
+            setLangMenuOpen(false);
           }
 
 
@@ -2473,33 +2498,56 @@ const UserNavbar = ({
 
 
               {isFarmer && (
-                <div className="w-full flex items-center justify-between px-1.5 py-1.5 text-left text-gray-500">
-                  <span className="flex items-center gap-1.5 text-sm leading-none text-gray-700">
-                    <Languages size={16} />
-                    <span className="text-sm">Language</span>
-                  </span>
+                <div className="w-full px-1.5 py-1 text-left text-gray-500">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs text-gray-700">
+                      <Languages size={15} />
+                      <span>Language</span>
+                    </span>
 
-                  <div className="flex items-center overflow-hidden rounded-md border border-gray-200 bg-white">
-                    {languageOptions.map((option) => {
-                      const isActive = language === option.code;
-
-                      return (
-                        <button
-                          key={option.code}
-                          type="button"
-                          onClick={() => handleLanguageChange(option.code)}
-                          className={`flex h-6 min-w-[46px] items-center justify-center gap-1 px-1.5 text-[9px] font-semibold leading-none tracking-tight transition ${
-                            isActive ? "bg-[#0B7A2A] text-white" : "bg-white text-gray-600 hover:bg-gray-100"
-                          }`}
-                          aria-label={`Switch language to ${option.label}`}
-                          title={option.label}
-                        >
-                          <span aria-hidden="true" className="text-[12px] leading-none">{option.flag}</span>
-                          <span>{option.code.toUpperCase()}</span>
-                        </button>
-                      );
-                    })}
+                    <button
+                      type="button"
+                      onClick={() => setLangMenuOpen((prev) => !prev)}
+                      className="flex h-6 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 text-[11px] font-medium text-gray-700 hover:border-[#0B7A2A] hover:bg-gray-50 transition cursor-pointer shadow-2xs"
+                      aria-label="Select language"
+                    >
+                      <span>{currentLanguageOption.flag}</span>
+                      <span className="max-w-[70px] truncate">{currentLanguageOption.label}</span>
+                      <ChevronDown
+                        size={11}
+                        className={`text-gray-400 transition-transform ${langMenuOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
                   </div>
+
+                  {langMenuOpen && (
+                    <div className="mt-1.5 space-y-0.5 rounded-lg border border-gray-200 bg-white p-1 shadow-inner">
+                      {languageOptions.map((opt) => {
+                        const isSelected = language === opt.code;
+                        return (
+                          <button
+                            key={opt.code}
+                            type="button"
+                            onClick={() => {
+                              handleLanguageChange(opt.code);
+                              setLangMenuOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-2 py-1 rounded text-left text-[11px] transition cursor-pointer ${
+                              isSelected
+                                ? "bg-[#0B7A2A]/10 text-[#0B7A2A] font-bold"
+                                : "text-gray-700 hover:bg-gray-100 font-medium"
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5 truncate">
+                              <span>{opt.flag}</span>
+                              <span>{opt.label}</span>
+                            </span>
+                            {isSelected && <Check size={12} className="text-[#0B7A2A] shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 

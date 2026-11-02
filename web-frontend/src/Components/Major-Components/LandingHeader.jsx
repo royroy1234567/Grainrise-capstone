@@ -26,7 +26,8 @@ export default function LandingHeader({ scrollTo: customScrollTo }) {
   });
   const navigate = useNavigate();
   const location = useLocation();
-  const t = translations[language].common;
+  const activeTranslations = translations[language] || translations.en;
+  const t = activeTranslations.common || translations.en.common;
 
   useEffect(() => {
     if (isDarkMode) {

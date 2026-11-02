@@ -158,7 +158,8 @@ export default function PartnerWithUs() {
   const routeParams = useParams();
   const fileInputRef = useRef(null);
   const [language] = useLanguagePreference();
-  const t = translations[language].partner;
+  const activeTranslations = translations[language] || translations.en;
+  const t = activeTranslations.partner || translations.en.partner;
 
   /* ── View Modes: 'form' | 'awaiting_verification' | 'awaiting_sms_link' | 'sms_link_landing' | 'verifying' | 'verified_success' | 'token_invalid' ── */
   const isSmsVerifyInitial = typeof window !== 'undefined' && Boolean(window.location.pathname.includes('/verify-sms'));
