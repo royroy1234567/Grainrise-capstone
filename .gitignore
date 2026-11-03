@@ -1,0 +1,25 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node / frontend
+node_modules/
+web-frontend/node_modules/
+web-frontend/dist/
+web-frontend/build/
+
+# Package lock (optional — remove this line if you want to track it)
+# web-frontend/package-lock.json
+
+# Misc text/note files
+*.txt
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
