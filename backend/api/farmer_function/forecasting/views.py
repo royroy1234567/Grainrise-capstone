@@ -404,6 +404,9 @@ def demand_forecast(
 
         result = generate_farmer_demand_forecast(
             farmer_id,
+            product_id=payload.get(
+                "product_id"
+            ) or payload.get("farm_product_id"),
             product_type=payload.get(
                 "product_type"
             ),
@@ -433,6 +436,63 @@ def demand_forecast(
             message=(
                 "Demand Forecast processed successfully."
             ),
+        )
+
+    except Exception as exc:
+        return _handle_exception(
+            exc
+        )
+
+
+# ============================================================
+# DEMAND COMPETITOR ANALYSIS
+# ============================================================
+
+
+@api_view([
+    "GET",
+])
+@farmer_required
+def demand_competitor_analysis(
+    request,
+):
+    """
+    AI-assisted competitor research for Farmer Demand Forecasting.
+    GET /api/farmer/forecasting/demand/competitors/?province=...&city=...&barangay=...&variety=...
+    """
+    try:
+        farmer_id = _farmer_user_id(
+            request
+        )
+
+        province = request.query_params.get("province", "").strip() or None
+        city = (
+            request.query_params.get("city", "").strip()
+            or request.query_params.get("municipality", "").strip()
+            or None
+        )
+        barangay = request.query_params.get("barangay", "").strip() or None
+        rice_variety = (
+            request.query_params.get("variety", "").strip()
+            or request.query_params.get("rice_variety", "").strip()
+            or None
+        )
+        product_type = request.query_params.get("product_type", "").strip() or None
+
+        from .competitor_service import get_farmer_competitor_analysis
+
+        result = get_farmer_competitor_analysis(
+            farmer_id,
+            province=province,
+            city_municipality=city,
+            barangay=barangay,
+            rice_variety=rice_variety,
+            product_type=product_type,
+        )
+
+        return _success(
+            result,
+            message="Competitor analysis retrieved successfully.",
         )
 
     except Exception as exc:
@@ -518,6 +578,9 @@ def forecast_ai(
             response_language=payload.get(
                 "response_language",
                 "taglish",
+            ),
+            force_regenerate=bool(
+                payload.get("force_regenerate", False)
             ),
         )
 

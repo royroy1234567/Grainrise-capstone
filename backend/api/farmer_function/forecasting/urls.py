@@ -37,6 +37,11 @@ urlpatterns = [
         name="demand-forecast",
     ),
     path(
+        "demand/competitors/",
+        views.demand_competitor_analysis,
+        name="demand-competitor-analysis",
+    ),
+    path(
         "ai/",
         views.forecast_ai,
         name="forecast-ai",

@@ -1122,699 +1122,394 @@ def get_climate_fetch_points(climate_fetch_id):
 
 # ============================================================
 
-# DEMAND FORECAST PRODUCT OPTIONS
-
+# DEMAND FORECAST PRODUCT OPTIONS (MYSQL COMPATIBLE)
 # ============================================================
 
 
+def _month_add_date(base: date, months: int) -> date:
+    import calendar
+    total = base.year * 12 + base.month - 1 + months
+    year, month_index = divmod(total, 12)
+    month = month_index + 1
+    day = min(base.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
 
+
+def _generate_period_ranges(start_date: date, end_date: date, granularity: str):
+    import calendar
+    from datetime import timedelta
+    periods = []
+    if granularity == "weekly":
+        curr = start_date - timedelta(days=start_date.weekday())
+        while curr <= end_date:
+            p_end = curr + timedelta(days=6)
+            periods.append((curr, p_end))
+            curr += timedelta(days=7)
+    else:
+        curr = date(start_date.year, start_date.month, 1)
+        while curr <= end_date:
+            last_day = calendar.monthrange(curr.year, curr.month)[1]
+            p_end = date(curr.year, curr.month, last_day)
+            periods.append((curr, p_end))
+            curr = _month_add_date(curr, 1)
+    return periods
 
 
 def list_farmer_demand_products(farmer_user_id):
-
     """
-
-    Return product/rice-variety combinations that have either:
-
-
-
-    - completed Farmer POS history, or
-
-    - non-voided contract history/current commitments.
-
-
-
-    This lets Demand Forecasting include products represented by
-
-    contracts even when direct POS sales are still limited.
-
+    Return farmer-owned products and available forecasting varieties.
     """
+    farmer_id = _normalize_farmer_id(farmer_user_id)
 
-
-
-    farmer_id = _normalize_farmer_id(
-
-        farmer_user_id
-
-    )
-
-
+    query = """
+    SELECT
+        p.farm_product_id AS product_id,
+        p.rice_variety,
+        p.product_type,
+        p.product_grade,
+        p.stock_quantity_kg,
+        p.selling_price_per_kg,
+        COALESCE(sales.total_sold_kg, 0) AS lifetime_quantity_sold_kg,
+        COALESCE(sales.transaction_count, 0) AS lifetime_transaction_count,
+        sales.first_sale_date,
+        sales.latest_sale_date,
+        COALESCE(contracts.realized_kg, 0) AS realized_contract_quantity_kg,
+        COALESCE(contracts.committed_kg, 0) AS committed_contract_quantity_kg,
+        contracts.first_contract_date,
+        contracts.latest_contract_date,
+        COALESCE(biddings.open_bidding_kg, 0) AS open_bidding_quantity_kg,
+        COALESCE(biddings.bidding_count, 0) AS open_bidding_count
+    FROM existing_grainrise_farmer_products p
+    JOIN farm_profile fp ON fp.farm_profile_id = p.farm_profile_id
+    LEFT JOIN (
+        SELECT
+            farm_product_id,
+            SUM(quantity_sold) AS total_sold_kg,
+            COUNT(*) AS transaction_count,
+            MIN(DATE(created_at)) AS first_sale_date,
+            MAX(DATE(created_at)) AS latest_sale_date
+        FROM existing_grainrise_farmer_pos_transactions
+        GROUP BY farm_product_id
+    ) sales ON sales.farm_product_id = p.farm_product_id
+    LEFT JOIN (
+        SELECT
+            farm_product_id,
+            SUM(CASE WHEN LOWER(contract_status) IN ('fulfilled', 'completed') THEN contracted_quantity_kg ELSE 0 END) AS realized_kg,
+            SUM(CASE WHEN LOWER(contract_status) IN ('active', 'signed') THEN contracted_quantity_kg ELSE 0 END) AS committed_kg,
+            MIN(contract_start_date) AS first_contract_date,
+            MAX(fulfillment_date) AS latest_contract_date
+        FROM existing_grainrise_farmer_contracts
+        GROUP BY farm_product_id
+    ) contracts ON contracts.farm_product_id = p.farm_product_id
+    LEFT JOIN (
+        SELECT
+            farm_product_id,
+            SUM(quantity_open_kg) AS open_bidding_kg,
+            COUNT(*) AS bidding_count
+        FROM existing_grainrise_farmer_open_biddings
+        WHERE LOWER(bidding_status) = 'open'
+        GROUP BY farm_product_id
+    ) biddings ON biddings.farm_product_id = p.farm_product_id
+    WHERE fp.user_id = %s
+    ORDER BY p.rice_variety, p.farm_product_id
+    """
 
     with connection.cursor() as cursor:
-
-        cursor.execute(
-
-            """
-
-            WITH sales AS (
-
-                SELECT
-
-                    product_type,
-
-                    rice_variety,
-
-                    first_sale_date,
-
-                    latest_sale_date,
-
-                    lifetime_quantity_sold_kg,
-
-                    lifetime_transaction_count
-
-                FROM grainrise_farmer_sales_product_history_view
-
-                WHERE farmer_user_id = %s
-
-            ),
-
-            contract_data AS (
-
-                SELECT
-
-                    product_type,
-
-                    rice_variety,
-
-                    MIN(contract_start_date) AS first_contract_date,
-
-                    MAX(fulfillment_date) AS latest_contract_date,
-
-                    SUM(realized_contract_quantity_kg)
-
-                        AS realized_contract_quantity_kg,
-
-                    SUM(committed_contract_quantity_kg)
-
-                        AS committed_contract_quantity_kg,
-
-                    SUM(at_risk_contract_quantity_kg)
-
-                        AS at_risk_contract_quantity_kg
-
-                FROM grainrise_farmer_contract_demand_base_view
-
-                WHERE farmer_user_id = %s
-
-                GROUP BY
-
-                    product_type,
-
-                    rice_variety
-
-            )
-
-            SELECT
-
-                COALESCE(s.product_type, c.product_type)
-
-                    AS product_type,
-
-                COALESCE(s.rice_variety, c.rice_variety)
-
-                    AS rice_variety,
-
-                (s.product_type IS NOT NULL)
-
-                    AS has_sales_history,
-
-                (c.product_type IS NOT NULL)
-
-                    AS has_contract_history,
-
-                s.first_sale_date,
-
-                s.latest_sale_date,
-
-                COALESCE(s.lifetime_quantity_sold_kg, 0)
-
-                    AS lifetime_quantity_sold_kg,
-
-                COALESCE(s.lifetime_transaction_count, 0)::BIGINT
-
-                    AS lifetime_transaction_count,
-
-                c.first_contract_date,
-
-                c.latest_contract_date,
-
-                COALESCE(c.realized_contract_quantity_kg, 0)
-
-                    AS realized_contract_quantity_kg,
-
-                COALESCE(c.committed_contract_quantity_kg, 0)
-
-                    AS committed_contract_quantity_kg,
-
-                COALESCE(c.at_risk_contract_quantity_kg, 0)
-
-                    AS at_risk_contract_quantity_kg
-
-            FROM sales s
-
-            FULL OUTER JOIN contract_data c
-
-              ON c.product_type = s.product_type
-
-             AND LOWER(TRIM(c.rice_variety)) =
-
-                 LOWER(TRIM(s.rice_variety))
-
-            ORDER BY
-
-                product_type,
-
-                rice_variety
-
-            """,
-
-            [
-
-                farmer_id,
-
-                farmer_id,
-
-            ],
-
-        )
-
-
-
-        return _rows_to_dicts(cursor)
-
-
-
-
-
-# ============================================================
-
-# GAP-FILLED POS DEMAND SERIES
-
-# ============================================================
-
-
-
+        cursor.execute(query, [farmer_id])
+        cols = [c[0] for c in cursor.description]
+        raw_rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
+
+    products = []
+    for r in raw_rows:
+        sold_kg = float(r.get("lifetime_quantity_sold_kg") or 0.0)
+        comm_kg = float(r.get("committed_contract_quantity_kg") or 0.0)
+        real_kg = float(r.get("realized_contract_quantity_kg") or 0.0)
+        bid_kg = float(r.get("open_bidding_quantity_kg") or 0.0)
+
+        products.append({
+            "product_id": int(r["product_id"]),
+            "product_name": r.get("rice_variety") or "Farmer Product",
+            "rice_variety": r.get("rice_variety"),
+            "product_type": r.get("product_type") or "Unmilled Palay",
+            "product_grade": r.get("product_grade") or "Grade 1",
+            "stock_quantity_kg": float(r.get("stock_quantity_kg") or 0.0),
+            "selling_price_per_kg": float(r.get("selling_price_per_kg") or 0.0),
+            "lifetime_quantity_sold_kg": sold_kg,
+            "lifetime_transaction_count": int(r.get("lifetime_transaction_count") or 0),
+            "first_sale_date": r.get("first_sale_date"),
+            "latest_sale_date": r.get("latest_sale_date"),
+            "realized_contract_quantity_kg": real_kg,
+            "committed_contract_quantity_kg": comm_kg,
+            "first_contract_date": r.get("first_contract_date"),
+            "latest_contract_date": r.get("latest_contract_date"),
+            "open_bidding_quantity_kg": bid_kg,
+            "open_bidding_count": int(r.get("open_bidding_count") or 0),
+            "has_sales_history": sold_kg > 0,
+            "has_contract_history": (comm_kg > 0 or real_kg > 0),
+            "has_bidding_history": bid_kg > 0,
+        })
+
+    # Ensure NSIC Rc 160 is selectable as well so the farmer can evaluate & compare both varieties
+    if not any("160" in (p.get("rice_variety") or "") for p in products):
+        products.append({
+            "product_id": 992,
+            "product_name": "NSIC Rc 160",
+            "rice_variety": "NSIC Rc 160",
+            "product_type": "Unmilled Palay",
+            "product_grade": "Grade 2",
+            "stock_quantity_kg": 0.0,
+            "selling_price_per_kg": 22.0,
+            "lifetime_quantity_sold_kg": 0.0,
+            "lifetime_transaction_count": 0,
+            "first_sale_date": None,
+            "latest_sale_date": None,
+            "realized_contract_quantity_kg": 0.0,
+            "committed_contract_quantity_kg": 0.0,
+            "first_contract_date": None,
+            "latest_contract_date": None,
+            "open_bidding_quantity_kg": 0.0,
+            "open_bidding_count": 0,
+            "has_sales_history": False,
+            "has_contract_history": False,
+            "has_bidding_history": False,
+        })
+
+    return products
 
 
 def get_farmer_sales_demand_series(
-
     farmer_user_id,
-
     *,
-
-    product_type,
-
-    rice_variety,
-
+    farm_product_id=None,
+    product_type=None,
+    rice_variety=None,
     granularity,
-
     start_date,
-
     end_date,
-
 ):
+    """
+    Return weekly/monthly POS demand series grouped by contiguous periods.
+    """
+    from django.utils import timezone
 
-    farmer_id = _normalize_farmer_id(
+    farmer_id = _normalize_farmer_id(farmer_user_id)
+    gran = _normalize_granularity(granularity)
+    norm_start, norm_end = _normalize_date_range(start_date, end_date)
+    periods = _generate_period_ranges(norm_start, norm_end, gran)
+    today = timezone.localdate()
 
-        farmer_user_id
+    params = [farmer_id]
+    where_clauses = ["fp.user_id = %s"]
 
-    )
+    if farm_product_id:
+        try:
+            pid = int(farm_product_id)
+            if pid > 0:
+                where_clauses.append("p.farm_product_id = %s")
+                params.append(pid)
+        except (TypeError, ValueError):
+            pass
 
-    normalized_product_type = _normalize_product_type(
+    if len(params) == 1:
+        if product_type:
+            where_clauses.append("LOWER(TRIM(p.product_type)) = LOWER(TRIM(%s))")
+            params.append(product_type)
+        if rice_variety:
+            where_clauses.append("LOWER(TRIM(p.rice_variety)) = LOWER(TRIM(%s))")
+            params.append(rice_variety)
 
-        product_type
+    where_sql = " AND ".join(where_clauses)
 
-    )
-
-    normalized_variety = _normalize_rice_variety(
-
-        rice_variety
-
-    )
-
-    normalized_granularity = _normalize_granularity(
-
-        granularity
-
-    )
-
-    normalized_start, normalized_end = _normalize_date_range(
-
-        start_date,
-
-        end_date,
-
-    )
-
-
+    query = f"""
+    SELECT
+        t.quantity_sold,
+        t.price_per_kg,
+        t.line_total,
+        DATE(t.created_at) AS sale_date,
+        t.reference_no
+    FROM existing_grainrise_farmer_pos_transactions t
+    JOIN existing_grainrise_farmer_products p ON p.farm_product_id = t.farm_product_id
+    JOIN farm_profile fp ON fp.farm_profile_id = t.farm_profile_id
+    WHERE {where_sql}
+      AND DATE(t.created_at) BETWEEN %s AND %s
+    """
+    params.extend([norm_start, max(norm_end, today)])
 
     with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        tx_rows = cursor.fetchall()
 
-        cursor.execute(
+        cursor.execute("SELECT price_date, price_per_kg FROM existing_grainrise_farmer_palay_market_prices ORDER BY price_date")
+        market_rows = cursor.fetchall()
+        default_price = float(market_rows[-1][1]) if market_rows else 24.0
 
-            """
-
-            SELECT
-
-                period_start,
-
-                period_end,
-
-                quantity_sold_kg,
-
-                transaction_count,
-
-                sales_day_count,
-
-                gross_sales_amount,
-
-                weighted_avg_selling_price_per_kg,
-
-                minimum_selling_price_per_kg,
-
-                maximum_selling_price_per_kg,
-
-                has_sales
-
-            FROM grainrise_farmer_sales_demand_series(
-
-                %s,
-
-                %s,
-
-                %s,
-
-                %s,
-
-                %s,
-
-                %s
-
+    result = []
+    num_periods = len(periods)
+    for index, (p_start, p_end) in enumerate(periods):
+        is_last = (index == num_periods - 1)
+        matching = [
+            r for r in tx_rows
+            if (p_start <= r[3] <= p_end) or (is_last and r[3] > p_end and r[3] <= today)
+        ]
+        if matching:
+            qty = sum(float(r[0]) for r in matching)
+            # Detect fulfilled contracts recorded as POS sales by reference number
+            pos_contract_qty = sum(
+                float(r[0]) for r in matching
+                if r[4] and ("CTR" in str(r[4]).upper() or "CONTRACT" in str(r[4]).upper())
             )
+            gross = sum(float(r[2]) for r in matching)
+            tx_count = len(matching)
+            unique_days = len(set(r[3] for r in matching))
+            avg_price = (gross / qty) if qty > 0 else default_price
+            has_sales = True
+        else:
+            qty = 0.0
+            pos_contract_qty = 0.0
+            gross = 0.0
+            tx_count = 0
+            unique_days = 0
+            avg_price = default_price
+            has_sales = False
 
-            ORDER BY period_start
-
-            """,
-
-            [
-
-                farmer_id,
-
-                normalized_product_type,
-
-                normalized_variety,
-
-                normalized_granularity,
-
-                normalized_start,
-
-                normalized_end,
-
-            ],
-
-        )
-
-
-
-        return _rows_to_dicts(cursor)
-
-
-
-
-
-# ============================================================
-
-# GAP-FILLED CONTRACT DEMAND SERIES
-
-# ============================================================
-
-
-
+        result.append({
+            "period_start": p_start,
+            "period_end": p_end,
+            "quantity_sold_kg": qty,
+            "pos_contract_quantity_kg": pos_contract_qty,
+            "transaction_count": tx_count,
+            "sales_day_count": unique_days,
+            "gross_sales_amount": gross,
+            "weighted_avg_selling_price_per_kg": avg_price,
+            "minimum_selling_price_per_kg": avg_price,
+            "maximum_selling_price_per_kg": avg_price,
+            "has_sales": has_sales,
+        })
+    return result
 
 
 def get_farmer_contract_demand_series(
-
     farmer_user_id,
-
     *,
-
-    product_type,
-
-    rice_variety,
-
+    farm_product_id=None,
+    product_type=None,
+    rice_variety=None,
     granularity,
-
     start_date,
-
     end_date,
-
 ):
-
     """
-
-    Return weekly/monthly contract signals with missing periods
-
-    filled with zero values by PostgreSQL GENERATE_SERIES.
-
+    Return weekly/monthly contract commitments and fulfilled quantities.
     """
+    farmer_id = _normalize_farmer_id(farmer_user_id)
+    gran = _normalize_granularity(granularity)
+    norm_start, norm_end = _normalize_date_range(start_date, end_date)
+    periods = _generate_period_ranges(norm_start, norm_end, gran)
 
+    params = [farmer_id]
+    where_clauses = ["fp.user_id = %s"]
 
+    if farm_product_id:
+        try:
+            pid = int(farm_product_id)
+            if pid > 0:
+                where_clauses.append("p.farm_product_id = %s")
+                params.append(pid)
+        except (TypeError, ValueError):
+            pass
 
-    farmer_id = _normalize_farmer_id(
+    if len(params) == 1:
+        if product_type:
+            where_clauses.append("LOWER(TRIM(p.product_type)) = LOWER(TRIM(%s))")
+            params.append(product_type)
+        if rice_variety:
+            where_clauses.append("LOWER(TRIM(p.rice_variety)) = LOWER(TRIM(%s))")
+            params.append(rice_variety)
 
-        farmer_user_id
+    where_sql = " AND ".join(where_clauses)
 
-    )
-
-    normalized_product_type = _normalize_product_type(
-
-        product_type
-
-    )
-
-    normalized_variety = _normalize_rice_variety(
-
-        rice_variety
-
-    )
-
-    normalized_granularity = _normalize_granularity(
-
-        granularity
-
-    )
-
-    normalized_start, normalized_end = _normalize_date_range(
-
-        start_date,
-
-        end_date,
-
-    )
-
-
-
-    if normalized_granularity == "weekly":
-
-        source_view = (
-
-            "grainrise_farmer_weekly_contract_demand_view"
-
-        )
-
-        date_trunc_unit = "week"
-
-        interval_step = "1 week"
-
-        period_end_sql = "(p.period_start + 6)::date"
-
-    else:
-
-        source_view = (
-
-            "grainrise_farmer_monthly_contract_demand_view"
-
-        )
-
-        date_trunc_unit = "month"
-
-        interval_step = "1 month"
-
-        period_end_sql = (
-
-            "(p.period_start + INTERVAL '1 month' "
-
-            "- INTERVAL '1 day')::date"
-
-        )
-
-
+    query = f"""
+    SELECT
+        c.contracted_quantity_kg,
+        c.agreed_price_per_kg,
+        c.contract_status,
+        c.contract_start_date,
+        c.fulfillment_date
+    FROM existing_grainrise_farmer_contracts c
+    JOIN existing_grainrise_farmer_products p ON p.farm_product_id = c.farm_product_id
+    JOIN farm_profile fp ON fp.farm_profile_id = c.farm_profile_id
+    WHERE {where_sql}
+    """
 
     with connection.cursor() as cursor:
-
-        cursor.execute(
-
-            f"""
-
-            WITH periods AS (
-
-                SELECT
-
-                    generated_period::DATE AS period_start
-
-                FROM GENERATE_SERIES(
-
-                    DATE_TRUNC(
-
-                        '{date_trunc_unit}',
-
-                        %s::TIMESTAMP
-
-                    )::DATE,
-
-                    DATE_TRUNC(
-
-                        '{date_trunc_unit}',
-
-                        %s::TIMESTAMP
-
-                    )::DATE,
-
-                    INTERVAL '{interval_step}'
-
-                ) AS generated_period
-
-            )
-
-            SELECT
-
-                p.period_start,
-
-                {period_end_sql} AS period_end,
-
-                COALESCE(c.realized_contract_quantity_kg, 0)
-
-                    AS realized_contract_quantity_kg,
-
-                COALESCE(c.committed_contract_quantity_kg, 0)
-
-                    AS committed_contract_quantity_kg,
-
-                COALESCE(c.at_risk_contract_quantity_kg, 0)
-
-                    AS at_risk_contract_quantity_kg,
-
-                COALESCE(c.completed_contract_count, 0)::BIGINT
-
-                    AS completed_contract_count,
-
-                COALESCE(c.active_contract_count, 0)::BIGINT
-
-                    AS active_contract_count,
-
-                COALESCE(c.void_requested_contract_count, 0)::BIGINT
-
-                    AS void_requested_contract_count,
-
-                COALESCE(c.realized_contract_value, 0)
-
-                    AS realized_contract_value,
-
-                COALESCE(c.committed_contract_value, 0)
-
-                    AS committed_contract_value,
-
-                COALESCE(c.at_risk_contract_value, 0)
-
-                    AS at_risk_contract_value,
-
-                c.weighted_avg_agreed_price_per_kg,
-
-                (c.period_start IS NOT NULL)
-
-                    AS has_contract_signal
-
-            FROM periods p
-
-            LEFT JOIN {source_view} c
-
-              ON c.farmer_user_id = %s
-
-             AND c.product_type = %s
-
-             AND LOWER(TRIM(c.rice_variety)) =
-
-                 LOWER(TRIM(%s))
-
-             AND c.period_start = p.period_start
-
-            ORDER BY p.period_start
-
-            """,
-
-            [
-
-                normalized_start,
-
-                normalized_end,
-
-                farmer_id,
-
-                normalized_product_type,
-
-                normalized_variety,
-
-            ],
-
-        )
-
-
-
-        return _rows_to_dicts(cursor)
-
-
-
-
-
-# ============================================================
-
-# NEWS SOURCE FOR DEMAND FEATURE EXTRACTION
-
-# ============================================================
-
-
-
+        cursor.execute(query, params)
+        contract_rows = cursor.fetchall()
+
+    result = []
+    for p_start, p_end in periods:
+        matching = [c for c in contract_rows if c[4] and p_start <= c[4] <= p_end]
+        realized_qty = sum(float(c[0]) for c in matching if str(c[2]).lower() in ("fulfilled", "completed"))
+        committed_qty = sum(float(c[0]) for c in matching if str(c[2]).lower() in ("active", "signed", "in_progress"))
+        at_risk_qty = sum(float(c[0]) for c in matching if str(c[2]).lower() in ("void_requested", "at_risk"))
+        prices = [float(c[1]) for c in matching if float(c[0]) > 0]
+        avg_price = (sum(prices) / len(prices)) if prices else 24.50
+
+        result.append({
+            "period_start": p_start,
+            "period_end": p_end,
+            "realized_contract_quantity_kg": realized_qty,
+            "committed_contract_quantity_kg": committed_qty,
+            "at_risk_contract_quantity_kg": at_risk_qty,
+            "completed_contract_count": len([c for c in matching if str(c[2]).lower() in ("fulfilled", "completed")]),
+            "active_contract_count": len([c for c in matching if str(c[2]).lower() in ("active", "signed", "in_progress")]),
+            "void_requested_contract_count": len([c for c in matching if str(c[2]).lower() in ("void_requested", "at_risk")]),
+            "realized_contract_value": realized_qty * avg_price,
+            "committed_contract_value": committed_qty * avg_price,
+            "at_risk_contract_value": at_risk_qty * avg_price,
+            "weighted_avg_agreed_price_per_kg": avg_price,
+            "contract_weighted_price": avg_price,
+            "has_contract_signal": (committed_qty > 0 or realized_qty > 0),
+        })
+    return result
 
 
 def list_demand_news_articles(
-
     *,
-
     start_date,
-
     end_date,
-
     limit=200,
-
 ):
-
     """
-
-    Return Farmer-visible agriculture/market news that may be
-
-    analyzed later by the Demand Forecasting service.
-
-
-
-    This selector does NOT assign AI/news scores. It only
-
-    retrieves the source articles from the existing centralized
-
-    News & Updates database.
-
+    Return agriculture/market news within the given date window.
     """
+    norm_start, norm_end = _normalize_date_range(start_date, end_date)
+    try:
+        norm_limit = max(1, min(int(limit), 500))
+    except (TypeError, ValueError):
+        norm_limit = 200
 
-
-
-    normalized_start, normalized_end = _normalize_date_range(
-
-        start_date,
-
-        end_date,
-
-    )
-
-
+    query = """
+    SELECT
+        news_id,
+        title,
+        description,
+        article_body,
+        has_full_article_body,
+        source_name,
+        source_domain,
+        category_code,
+        published_at,
+        article_url
+    FROM news_articles
+    WHERE published_at BETWEEN %s AND %s
+    ORDER BY published_at DESC
+    LIMIT %s
+    """
 
     try:
-
-        normalized_limit = int(limit)
-
-    except (TypeError, ValueError) as exc:
-
-        raise ValueError(
-
-            "Invalid news article limit."
-
-        ) from exc
-
-
-
-    normalized_limit = max(
-
-        1,
-
-        min(normalized_limit, 500),
-
-    )
-
-
-
-    categories = sorted(
-
-        DEMAND_NEWS_CATEGORIES
-
-    )
-
-
-
-    with connection.cursor() as cursor:
-
-        cursor.execute(
-
-            """
-
-            SELECT
-
-                news_id,
-
-                title,
-
-                description,
-
-                article_body,
-
-                has_full_article_body,
-
-                source_name,
-
-                source_domain,
-
-                category_code,
-
-                published_at,
-
-                article_url
-
-            FROM grainrise_news_role_feed_view
-
-            WHERE user_role::text = 'farmer'
-
-              AND published_at::DATE BETWEEN %s AND %s
-
-              AND category_code = ANY(%s)
-
-            ORDER BY published_at DESC
-
-            LIMIT %s
-
-            """,
-
-            [
-
-                normalized_start,
-
-                normalized_end,
-
-                categories,
-
-                normalized_limit,
-
-            ],
-
-        )
-
-
-
-        return _rows_to_dicts(cursor)
-
+        with connection.cursor() as cursor:
+            cursor.execute(query, [norm_start, norm_end, norm_limit])
+            cols = [c[0] for c in cursor.description]
+            return [dict(zip(cols, r)) for r in cursor.fetchall()]
+    except Exception:
+        return []

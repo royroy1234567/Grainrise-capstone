@@ -34,6 +34,8 @@ from datetime import date, datetime
 
 from typing import Mapping, Sequence
 
+import hashlib
+from django.core.cache import cache
 from django.db import connection
 
 try:
@@ -181,13 +183,20 @@ def _row_dict(cursor, row):
 
 
 
+_TABLE_COLUMNS_CACHE = {}
+
+
 def _table_columns(table_name: str):
+    if table_name in _TABLE_COLUMNS_CACHE:
+        return _TABLE_COLUMNS_CACHE[table_name]
 
     with connection.cursor() as cursor:
 
         cursor.execute("\n            SELECT column_name\n            FROM information_schema.columns\n            WHERE table_schema = 'public'\n              AND table_name = %s\n            ORDER BY ordinal_position\n            ", [table_name])
 
-        return {row[0] for row in cursor.fetchall()}
+        cols = {row[0] for row in cursor.fetchall()}
+        _TABLE_COLUMNS_CACHE[table_name] = cols
+        return cols
 
 
 
@@ -658,7 +667,7 @@ def _fail_interpretation(interpretation_id: int, meta, message):
 
 
 
-def generate_farmer_forecast_ai(farmer_user_id, *, scope, climate_forecast_run_id=None, demand_forecast_run_id=None, question_text=None, response_language='fil'):
+def generate_farmer_forecast_ai(farmer_user_id, *, scope, climate_forecast_run_id=None, demand_forecast_run_id=None, question_text=None, response_language='fil', force_regenerate=False):
 
     """
 
@@ -695,6 +704,19 @@ def generate_farmer_forecast_ai(farmer_user_id, *, scope, climate_forecast_run_i
     if scope == 'combined' and (climate_run_id is None or demand_run_id is None):
 
         raise AIWorkflowError('combined_runs_required', 'Combined Insights require both Climate and Demand Forecast runs.', 400)
+
+    cache_key = None
+    if scope == 'climate' and climate_run_id:
+        if question_text:
+            q_hash = hashlib.sha256(_text(question_text).lower().encode('utf-8')).hexdigest()[:12]
+            cache_key = f"grainrise:ai_explain:climate:q:{climate_run_id}:{q_hash}:{language}"
+        else:
+            cache_key = f"grainrise:ai_explain:climate:{climate_run_id}:{language}"
+
+        if not force_regenerate:
+            cached = cache.get(cache_key)
+            if cached and isinstance(cached, dict):
+                return cached
 
     climate_context = None
 
@@ -742,7 +764,10 @@ def generate_farmer_forecast_ai(farmer_user_id, *, scope, climate_forecast_run_i
 
         _complete_interpretation(interpretation_id, interpretation_meta, payload)
 
-        return {'ai_interpretation_id': interpretation_id, 'scope': scope, 'interaction_type': 'user_question' if _text(question_text) else 'automatic', 'climate_forecast_run_id': climate_run_id, 'demand_forecast_run_id': demand_run_id, 'response_language': language, 'grounding_summary': {'learning_material_count': len(materials), 'news_article_count': len(news), 'has_climate_context': climate_context is not None, 'has_demand_context': demand_context is not None, 'has_farm_context': bool(farm_context)}, **payload}
+        response_data = {'ai_interpretation_id': interpretation_id, 'scope': scope, 'interaction_type': 'user_question' if _text(question_text) else 'automatic', 'climate_forecast_run_id': climate_run_id, 'demand_forecast_run_id': demand_run_id, 'response_language': language, 'grounding_summary': {'learning_material_count': len(materials), 'news_article_count': len(news), 'has_climate_context': climate_context is not None, 'has_demand_context': demand_context is not None, 'has_farm_context': bool(farm_context)}, **payload}
+        if cache_key:
+            cache.set(cache_key, response_data, timeout=86400)
+        return response_data
 
     except ForecastAIError as exc:
 

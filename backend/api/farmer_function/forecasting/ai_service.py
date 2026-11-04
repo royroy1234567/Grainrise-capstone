@@ -796,6 +796,9 @@ Return ONLY one valid JSON object with these exact string fields:
 
 {{
 
+  "water_and_irrigation": "One informative paragraph explaining practical actions, reasons, and precautions for paddy water regulation based on actual forecast numbers.",
+  "nutrient_management": "One informative paragraph explaining practical fertilizer timing, split applications, and precautions against runoff/leaching during forecasted rain.",
+  "seasonal_recommendations": "One informative paragraph explaining drought or rainy season resilience, dike maintenance, disease scouting, and certified rice varieties for this forecast.",
   "explanation_text": "...",
 
   "forecast_reason_text": "...",
@@ -882,6 +885,80 @@ def _build_user_prompt(
 
 ):
 
+    if scope == "climate":
+        climate = snapshot.get("climate") or {}
+        location = climate.get("location") or {}
+        location_label = location.get("label") or "Selected Location"
+        lat = location.get("latitude", 15.48)
+        lon = location.get("longitude", 120.97)
+
+        farm = snapshot.get("farm") or {}
+        farm_info = []
+        if farm.get("farm_name"):
+            farm_info.append(f"Farm: {farm['farm_name']}")
+        if farm.get("rice_variety_currently_planted"):
+            farm_info.append(f"Rice Variety: {farm['rice_variety_currently_planted']}")
+        if farm.get("total_farm_area"):
+            farm_info.append(f"Area: {farm['total_farm_area']} ha")
+        farm_desc = (", ".join(farm_info) + "\n") if farm_info else ""
+
+        series = climate.get("forecast_series") or []
+        if not series:
+            pts = climate.get("forecast", {}).get("precipitation_mm", [])
+            series = [{"rainfall_mm": p.get("value", 0), "temperature_c": 28.0, "label": p.get("label", "")} for p in pts]
+
+        month_lines = []
+        max_rain = 0.0
+        peak_month = ""
+        min_rain = 9999.0
+        low_month = ""
+        total_temp = 0.0
+        for idx, m in enumerate(series[:6], 1):
+            r = float(m.get("rainfall_mm") or 0.0)
+            t = float(m.get("temperature_c") or 28.0)
+            lbl = m.get("label") or f"Month {idx}"
+            month_lines.append(f"- {lbl}: Rainfall {r:.1f} mm, Temp {t:.1f}°C")
+            if r > max_rain:
+                max_rain = r
+                peak_month = lbl
+            if r < min_rain:
+                min_rain = r
+                low_month = lbl
+            total_temp += t
+
+        avg_temp = (total_temp / len(series[:6])) if series else 28.0
+        if min_rain == 9999.0:
+            min_rain = 0.0
+            low_month = peak_month
+
+        if question:
+            task = f"Answer this Farmer question using the climate forecast metrics below:\n\n{question}"
+        else:
+            task = (
+                "Provide practical, informative agronomic guidance for this 6-month seasonal forecast across the 3 sections:\n"
+                "1. Water & Irrigation (paddy water regulation, AWD or drainage drawdown, reasons based on forecast rainfall numbers, precautions)\n"
+                "2. Nutrient Management (fertilizer timing, split nitrogen applications, precautions against runoff/leaching during forecasted rain)\n"
+                "3. Drought / Rainy Season Farming Recommendations (seasonal resilience, pilapil bund maintenance, pest/disease scouting, certified rice varieties for this forecast)\n"
+                "Also provide explanation_text, forecast_reason_text, recommended_actions_text, learning_guidance_text, and response_text."
+            )
+
+        return (
+            f"TASK:\n{task}\n\n"
+            f"CLIMATE FORECAST METRICS:\n"
+            f"Location: {location_label} (Lat: {lat}, Lon: {lon})\n"
+            f"{farm_desc}"
+            f"6-Month Outlook:\n" + "\n".join(month_lines) + "\n\n"
+            f"Key Forecast Summary:\n"
+            f"- Peak Rainfall Month: {peak_month} ({max_rain:.1f} mm)\n"
+            f"- Lowest Rainfall Month: {low_month} ({min_rain:.1f} mm)\n"
+            f"- Average Temperature: {avg_temp:.1f}°C\n\n"
+            f"AGRONOMIC RULES (PhilRice Validated Standards):\n"
+            f"- If peak rainfall >= 120 mm: prioritize proactive field drainage, maintain shallow water (3-5 cm) ahead of storms, split urea/NPK applications strictly during 3-day dry windows to prevent leaching and runoff, inspect pilapil dikes against breaches, watch for sheath blight/bacterial leaf streak, consider submergence-tolerant varieties (e.g. NSIC Rc 194 / Submarino).\n"
+            f"- If moderate rainfall (70-120 mm): practice Alternate Wetting and Drying (AWD) by allowing water to subside to 15 cm below soil surface before re-irrigating to conserve water and promote deep roots, balance NPK at tillering.\n"
+            f"- If low rainfall (< 70 mm): strict water conservation, repair dikes to prevent seepage, maintain 2-3 cm shallow water at panicle initiation/flowering, consider drought-tolerant varieties (e.g. Sahod Ulan / Katihan).\n"
+            f"- Note: Do not claim measured soil health; interpretations are based on climate patterns and PhilRice crop standards."
+        )
+
     if question:
 
         task = (
@@ -935,45 +1012,18 @@ def _build_user_prompt(
 
 
 def _provider_settings():
-
-    endpoint = _text(
-
-        os.getenv("GRAINRISE_AI_ENDPOINT")
-
-    )
-
-    api_key = _text(
-
-        os.getenv("GRAINRISE_AI_API_KEY")
-
-    )
-
-    primary_model = _text(
-
-        os.getenv("GRAINRISE_AI_MODEL")
-
-    )
-
-    provider = (
-
-        _text(os.getenv("GRAINRISE_AI_PROVIDER"))
-
-        or "openai_compatible"
-
-    )
+    endpoint = _text(os.getenv("GRAINRISE_AI_ENDPOINT"))
+    api_key = _text(os.getenv("GRAINRISE_AI_API_KEY"))
+    primary_model = _text(os.getenv("GRAINRISE_AI_MODEL")) or "gemini-flash-lite-latest"
+    provider = _text(os.getenv("GRAINRISE_AI_PROVIDER")) or "google_gemini"
 
 
 
     timeout = _env_int(
-
         "GRAINRISE_AI_TIMEOUT_SECONDS",
-
-        DEFAULT_TIMEOUT_SECONDS,
-
+        12,
         minimum=2,
-
-        maximum=180,
-
+        maximum=20,
     )
 
 
@@ -1768,44 +1818,30 @@ def _request_model(
 
 
 
-        retryable = (
-
-            response.status_code
-
-            in RETRYABLE_HTTP_STATUSES
-
+        is_quota_exhausted = (
+            response.status_code == 429
+            and any(kw in (detail or "").lower() for kw in ("quota", "resource_exhausted", "free tier", "limit exceeded"))
         )
 
-
+        retryable = (
+            response.status_code in RETRYABLE_HTTP_STATUSES
+            and not is_quota_exhausted
+        )
 
         if retryable and attempt < max_retries:
-
             _sleep_before_retry(
-
                 response=response,
-
                 retry_index=attempt,
-
                 model=model,
-
             )
-
             continue
 
-
-
         return {
-
             "success": False,
-
-            "transient": retryable,
-
+            "transient": retryable or is_quota_exhausted,
             "response": response,
-
             "exception": None,
-
             "error_type": "http",
-
         }
 
 
@@ -1839,49 +1875,40 @@ def _request_model(
 
 
 def _call_provider(
-
     *,
-
     system_prompt: str,
-
     user_prompt: str,
-
 ):
-
     settings = _provider_settings()
+    models = _model_chain(settings)[:3]
 
-    models = _model_chain(settings)
-
-
+    start_time = time.time()
+    max_total_seconds = 24.0  # Overall budget to safely finish before frontend's 30s timeout
 
     last_result = None
-
     last_model = None
 
-
-
     for model_index, model in enumerate(models):
+        elapsed = time.time() - start_time
+        remaining_budget = max_total_seconds - elapsed
+        if remaining_budget <= 2.0:
+            logger.warning("Forecast AI total provider budget exhausted (%.1fs). Terminating model loop.", elapsed)
+            break
 
         last_model = model
 
-
-
         if model_index > 0:
-
             logger.warning(
-
-                "Forecast AI switching to fallback model=%s.",
-
+                "Forecast AI switching to fallback model=%s after %.1fs.",
                 model,
-
+                elapsed,
             )
 
-
+        model_settings = dict(settings)
+        model_settings["timeout"] = max(2.0, min(remaining_budget, float(settings.get("timeout") or 12.0)))
 
         result = _request_model(
-
-            settings=settings,
-
+            settings=model_settings,
             model=model,
 
             system_prompt=system_prompt,
@@ -2706,19 +2733,31 @@ def generate_forecast_interpretation(
 
         parsed = _parse_response(raw_text)
 
+    except ForecastAIError:
+        raise
+    except requests.Timeout as exc:
+        logger.warning("Forecast AI provider timeout: %s", exc)
+        raise ForecastAIError(
+            "ai_provider_timeout",
+            "The AI explanation service timed out while generating recommendations. Please click Retry.",
+            504,
+        ) from exc
+    except requests.RequestException as exc:
+        logger.warning("Forecast AI network/connection error: %s", exc)
+        raise ForecastAIError(
+            "ai_provider_unavailable",
+            "Unable to reach the AI explanation service. Please click Retry.",
+            503,
+        ) from exc
     except Exception as exc:
+        logger.warning("Forecast AI provider call failed: %s", exc)
+        raise ForecastAIError(
+            "ai_generation_failed",
+            "Unable to generate AI explanation at this time. Please click Retry.",
+            500,
+        ) from exc
 
-        logger.warning("Forecast AI provider call timed out or failed: %s. Using expert agronomic guidance.", exc)
 
-        if deterministic_climate:
-
-            parsed = deterministic_climate
-
-            effective_settings = {"provider": "grainrise_deterministic_agronomy", "model": "expert_rules_v1"}
-
-        else:
-
-            raise
 
 
 

@@ -246,6 +246,7 @@ def _sales_frame(rows: Sequence[Mapping], granularity: str):
         records.append({
             "period_start": _period_start(row.get("period_start"), granularity),
             "pos_quantity_sold_kg": max(_float(row.get("quantity_sold_kg")), 0.0),
+            "pos_contract_quantity_kg": max(_float(row.get("pos_contract_quantity_kg")), 0.0),
             "pos_transaction_count": max(_float(row.get("transaction_count")), 0.0),
             "pos_sales_day_count": max(_float(row.get("sales_day_count")), 0.0),
             "pos_weighted_price": _optional_float(
@@ -254,14 +255,15 @@ def _sales_frame(rows: Sequence[Mapping], granularity: str):
         })
     if not records:
         return pd.DataFrame(columns=[
-            "period_start", "pos_quantity_sold_kg", "pos_transaction_count",
-            "pos_sales_day_count", "pos_weighted_price",
+            "period_start", "pos_quantity_sold_kg", "pos_contract_quantity_kg",
+            "pos_transaction_count", "pos_sales_day_count", "pos_weighted_price",
         ])
     return (
         pd.DataFrame(records)
         .groupby("period_start", as_index=False)
         .agg({
             "pos_quantity_sold_kg": "sum",
+            "pos_contract_quantity_kg": "sum",
             "pos_transaction_count": "sum",
             "pos_sales_day_count": "sum",
             "pos_weighted_price": "mean",
@@ -406,6 +408,7 @@ def build_historical_feature_frame(
     contract_rows: Sequence[Mapping],
     news_articles: Sequence[Mapping],
     granularity: str,
+    competitor_count: float | int | None = None,
 ):
     granularity = _normalize_granularity(granularity)
     sales = _sales_frame(sales_rows, granularity)
@@ -429,7 +432,8 @@ def build_historical_feature_frame(
             frame = frame.merge(source, how="left", on="period_start")
 
     zero_cols = (
-        "pos_quantity_sold_kg", "pos_transaction_count", "pos_sales_day_count",
+        "pos_quantity_sold_kg", "pos_contract_quantity_kg",
+        "pos_transaction_count", "pos_sales_day_count",
         "realized_contract_quantity_kg", "committed_contract_quantity_kg",
         "at_risk_contract_quantity_kg", "news_article_count",
         "news_demand_pressure", "news_supply_disruption",
@@ -450,9 +454,25 @@ def build_historical_feature_frame(
             .fillna(0.0)
         )
 
-    frame["realized_demand_kg"] = (
-        frame["pos_quantity_sold_kg"] + frame["realized_contract_quantity_kg"]
+    # Combine eligible POS and contract records by product and period.
+    # Prevent double-counting fulfilled contracts already recorded as POS sales.
+    pos_contract_overlap = frame["pos_contract_quantity_kg"]
+    unrecorded_contract_kg = np.maximum(
+        frame["realized_contract_quantity_kg"] - pos_contract_overlap,
+        0.0
     )
+    frame["realized_demand_kg"] = (
+        frame["pos_quantity_sold_kg"] + unrecorded_contract_kg
+    )
+
+    # Optional competitor count feature if verified and available
+    if competitor_count is not None:
+        try:
+            c_val = float(competitor_count)
+            if c_val > 0:
+                frame["competitor_count"] = c_val
+        except (TypeError, ValueError):
+            pass
 
     pos_qty = frame["pos_quantity_sold_kg"]
     contract_qty = frame["realized_contract_quantity_kg"]
@@ -509,7 +529,7 @@ OPTIONAL_FEATURES = (
     "lag_2_demand", "lag_3_demand", "market_price_per_kg",
     "news_demand_pressure", "news_supply_disruption",
     "news_price_pressure", "news_policy_import_intensity",
-    "news_article_count",
+    "news_article_count", "competitor_count",
 )
 
 
@@ -707,15 +727,9 @@ def _recursive_forecast(
 
 def _limited_history_baseline(history):
     """
-    Conservative fallback for Farmers with only a small amount of
-    historical demand data.
-
-    This is NOT Multiple Linear Regression.
-
-    The estimate uses the mean of up to the latest three realized
-    demand periods. When at least two recent periods exist, a very
-    small linear step is allowed, capped at 20% of the baseline per
-    forecast period so a tiny dataset cannot create an extreme trend.
+    Preliminary estimate baseline consistent with Miller/Warehouse fallback.
+    Uses actual non-zero sales periods to calculate baseline demand per period,
+    with conservative linear step if 2+ active periods exist.
     """
     values = (
         pd.to_numeric(
@@ -731,17 +745,21 @@ def _limited_history_baseline(history):
     if not values:
         return 0.0, 0.0
 
-    recent = values[-min(3, len(values)):]
-    base = max(float(np.mean(recent)), 0.0)
+    non_zero = [v for v in values if v > 0]
+    if not non_zero:
+        return 0.0, 0.0
 
-    if len(recent) < 2:
+    # Miller/Warehouse approach: baseline from non-zero historical demand periods
+    base = max(float(np.mean(non_zero)), 0.0)
+
+    if len(non_zero) < 2:
         return base, 0.0
 
-    x = np.arange(len(recent), dtype=float)
-    slope = float(np.polyfit(x, np.asarray(recent, dtype=float), 1)[0])
+    x = np.arange(len(non_zero), dtype=float)
+    slope = float(np.polyfit(x, np.asarray(non_zero, dtype=float), 1)[0])
 
-    # Keep fallback movement conservative because the history is small.
-    max_step = max(base * 0.20, 1.0)
+    # Cap slope to prevent extreme extrapolation from small history (max 15% of baseline)
+    max_step = max(base * 0.15, 1.0)
     slope = float(np.clip(slope, -max_step, max_step))
 
     return base, slope
@@ -827,7 +845,118 @@ def _limited_history_forecast(
     return output
 
 
-def _limited_history_result(
+def _contract_floor_result(
+    *,
+    history,
+    future_contract_rows,
+    granularity,
+    forecast_start,
+    horizon,
+    product_type,
+    rice_variety,
+    nonzero_history_period_count,
+):
+    contract_lookup = _future_contract_lookup(
+        future_contract_rows,
+        granularity,
+    )
+    periods_seq = _period_sequence(
+        forecast_start,
+        granularity,
+        horizon,
+    )
+    output_periods = []
+    for lead, start in enumerate(periods_seq, start=1):
+        contract = contract_lookup.get(start, {})
+        committed = max(_float(contract.get("committed_contract_quantity_kg")), 0.0)
+        at_risk = max(_float(contract.get("at_risk_contract_quantity_kg")), 0.0)
+        end = _period_end(start, granularity)
+        output_periods.append({
+            "period_start": start.date(),
+            "period_end": end.date(),
+            "model_forecast_quantity_kg": 0.0,
+            "committed_contract_quantity_kg": round(committed, 2),
+            "at_risk_contract_quantity_kg": round(at_risk, 2),
+            "forecast_quantity_kg": round(committed, 2),
+            "contract_floor_applied": committed > 0,
+            "news_signal_decay": 0.0,
+            "forecast_method": "contract_floor",
+        })
+
+    projected_total = round(
+        sum(_float(row.get("forecast_quantity_kg")) for row in output_periods),
+        2,
+    )
+    peak_start, peak_end = _peak(output_periods)
+
+    snapshot = {
+        "methodology": {
+            "model_type": MODEL_TYPE,
+            "model_version": MODEL_VERSION,
+            "forecast_mode": "contract_floor",
+            "forecast_method_label": "Active Contract Commitment Floor",
+            "uses_time_series_mlr": False,
+            "fallback_reason": (
+                "Known active contract commitments applied as committed demand floor."
+            ),
+            "target_definition": (
+                "POS quantity sold + completed fulfilled contract quantity"
+            ),
+            "active_contract_treatment": (
+                "Known committed demand is a forecast floor, not an additive term."
+            ),
+        },
+        "product": {
+            "product_type": product_type,
+            "rice_variety": rice_variety,
+        },
+        "granularity": granularity,
+        "history_period_count": len(history),
+        "nonzero_history_period_count": nonzero_history_period_count,
+        "selected_features": [],
+        "standardized_coefficients": {},
+        "historical_periods": _history_snapshot(history),
+    }
+
+    output = {
+        "granularity": granularity,
+        "horizon_periods": horizon,
+        "forecast_mode": "contract_floor",
+        "forecast_method_label": "Active Contract Commitment Floor",
+        "uses_time_series_mlr": False,
+        "periods": [{
+            **row,
+            "period_start": row["period_start"].isoformat(),
+            "period_end": row["period_end"].isoformat(),
+            "forecast_method": "contract_floor",
+        } for row in output_periods],
+    }
+
+    metrics = {
+        "forecast_mode": "contract_floor",
+        "training_period_count": len(history),
+        "validation_period_count": 0,
+        "feature_count": 0,
+        "mae_kg": None,
+        "rmse_kg": None,
+        "r2": None,
+    }
+
+    return DemandForecastResult(
+        data_status="sufficient",
+        insufficient_data_reason=None,
+        model_type=MODEL_TYPE,
+        model_version=MODEL_VERSION,
+        feature_snapshot=snapshot,
+        forecast_output=output,
+        projected_total_quantity_kg=projected_total,
+        demand_trend=_trend(output_periods),
+        peak_period_start=peak_start,
+        peak_period_end=peak_end,
+        model_metrics=metrics,
+    )
+
+def _preliminary_estimate_result(
     *,
     history,
     future_contract_rows,
@@ -855,20 +984,18 @@ def _limited_history_result(
     )
 
     peak_start, peak_end = _peak(periods)
-
     base, slope = _limited_history_baseline(history)
 
     snapshot = {
         "methodology": {
             "model_type": MODEL_TYPE,
             "model_version": MODEL_VERSION,
-            "forecast_mode": LIMITED_HISTORY_METHOD,
-            "forecast_method_label": "Limited-History Estimate",
+            "forecast_mode": "preliminary_estimate",
+            "forecast_method_label": "Preliminary Demand Estimate",
             "uses_time_series_mlr": False,
             "fallback_reason": (
-                "The Farmer has at least one historical demand period, "
-                "but not enough clean history to fit the Time Series + "
-                "Multiple Linear Regression model."
+                "Preliminary demand estimate computed from active sales baseline "
+                "and confirmed contract floors (consistent with Miller/Warehouse baseline fallback)."
             ),
             "target_definition": (
                 "POS quantity sold + completed fulfilled contract quantity"
@@ -880,8 +1007,7 @@ def _limited_history_result(
                 "Reported as at-risk demand; not guaranteed demand."
             ),
             "news_feature_method": (
-                "News is preserved for context but is not used as a numerical "
-                "predictor in the limited-history fallback."
+                "News signals recorded for market advisory context."
             ),
         },
         "product": {
@@ -891,8 +1017,8 @@ def _limited_history_result(
         "granularity": granularity,
         "history_period_count": len(history),
         "nonzero_history_period_count": nonzero_history_period_count,
-        "limited_history_baseline_quantity_kg": round(base, 2),
-        "limited_history_step_quantity_kg": round(slope, 2),
+        "preliminary_baseline_quantity_kg": round(base, 2),
+        "preliminary_step_quantity_kg": round(slope, 2),
         "selected_features": [],
         "standardized_coefficients": {},
         "historical_periods": _history_snapshot(history),
@@ -901,18 +1027,19 @@ def _limited_history_result(
     output = {
         "granularity": granularity,
         "horizon_periods": horizon,
-        "forecast_mode": LIMITED_HISTORY_METHOD,
-        "forecast_method_label": "Limited-History Estimate",
+        "forecast_mode": "preliminary_estimate",
+        "forecast_method_label": "Preliminary Demand Estimate",
         "uses_time_series_mlr": False,
         "periods": [{
             **row,
             "period_start": row["period_start"].isoformat(),
             "period_end": row["period_end"].isoformat(),
+            "forecast_method": "preliminary_estimate",
         } for row in periods],
     }
 
     metrics = {
-        "forecast_mode": LIMITED_HISTORY_METHOD,
+        "forecast_mode": "preliminary_estimate",
         "training_period_count": len(history),
         "validation_period_count": 0,
         "feature_count": 0,
@@ -991,19 +1118,36 @@ def _history_snapshot(history):
     return output
 
 
-def _insufficient(reason, history_period_count=0):
+def _insufficient(reason, history_period_count=0, history=None, product_type=None, rice_variety=None, granularity="monthly"):
+    history_rows = _history_snapshot(history) if history is not None and not history.empty else []
     return DemandForecastResult(
         data_status="insufficient",
         insufficient_data_reason=reason,
         model_type=MODEL_TYPE,
         model_version=MODEL_VERSION,
-        feature_snapshot={"history_period_count": history_period_count},
+        feature_snapshot={
+            "history_period_count": history_period_count,
+            "historical_periods": history_rows,
+            "product": {
+                "product_type": product_type,
+                "rice_variety": rice_variety,
+            },
+            "granularity": granularity,
+        },
         forecast_output={"periods": []},
         projected_total_quantity_kg=None,
         demand_trend=None,
         peak_period_start=None,
         peak_period_end=None,
-        model_metrics={},
+        model_metrics={
+            "forecast_mode": "insufficient_history",
+            "training_period_count": history_period_count,
+            "validation_period_count": 0,
+            "feature_count": 0,
+            "mae_kg": None,
+            "rmse_kg": None,
+            "r2": None,
+        },
     )
 
 
@@ -1018,6 +1162,7 @@ def generate_demand_forecast(
     horizon_periods=None,
     product_type: str | None = None,
     rice_variety: str | None = None,
+    competitor_count: float | int | None = None,
 ) -> DemandForecastResult:
     """
     GrainRise adaptive Demand Forecast.
@@ -1025,11 +1170,11 @@ def generate_demand_forecast(
     Historical target:
         POS + completed fulfilled contract quantity.
 
-    1-8 historical periods, or an otherwise too-small feature matrix:
-        Limited-History Estimate.
+    Preliminary Estimate (Reusing Miller/Warehouse baseline fallback):
+        Available with at least ONE valid historical sales or contract data point.
 
-    Enough clean historical data:
-        Time Series + Multiple Linear Regression.
+    Time Series + Multiple Linear Regression:
+        Used when at least 9 periods with at least 4 active sales periods exist.
 
     Future active contracts:
         known-demand floor.
@@ -1039,7 +1184,7 @@ def generate_demand_forecast(
 
     News:
         deterministic numeric features for the full MLR path.
-        AI is never used to generate predictor values.
+        AI is never used to generate numerical predictor values.
     """
     granularity = _normalize_granularity(granularity)
     horizon = _normalize_horizon(granularity, horizon_periods)
@@ -1053,6 +1198,7 @@ def generate_demand_forecast(
         contract_rows=contract_history_rows,
         news_articles=news_articles,
         granularity=granularity,
+        competitor_count=competitor_count,
     )
 
     count = len(history)
@@ -1061,7 +1207,12 @@ def generate_demand_forecast(
     if history.empty:
         return _insufficient(
             "At least one historical POS or completed Contract demand "
-            "period is required before GrainRise can create a Demand Forecast."
+            "period is required before GrainRise can create a Demand Forecast.",
+            history_period_count=0,
+            history=None,
+            product_type=product_type,
+            rice_variety=rice_variety,
+            granularity=granularity,
         )
 
     if count < minimum:
@@ -1216,18 +1367,38 @@ def generate_demand_forecast(
             )
 
     # ========================================================
-    # LIMITED-HISTORY FALLBACK
+    # PRELIMINARY ESTIMATE FALLBACK (REUSING MILLER/WAREHOUSE APPROACH)
+    # Allows a preliminary demand forecast with at least ONE valid
+    # historical sales or contract data point.
     # ========================================================
+    total_realized_history = float(history["realized_demand_kg"].sum()) if not history.empty else 0.0
+    has_committed_contracts = any(
+        _float(r.get("committed_contract_quantity_kg")) > 0
+        for r in (future_contract_rows or ())
+    )
 
-    return _limited_history_result(
+    has_valid_history = (nonzero >= 1) or (total_realized_history > 0) or has_committed_contracts
+
+    if has_valid_history:
+        return _preliminary_estimate_result(
+            history=history,
+            future_contract_rows=future_contract_rows,
+            granularity=granularity,
+            forecast_start=normalized_start,
+            horizon=horizon,
+            product_type=product_type,
+            rice_variety=rice_variety,
+            nonzero_history_period_count=nonzero,
+        )
+
+    # Strictly NO valid history and NO contracts: Insufficient data
+    return _insufficient(
+        "No historical POS sales or contract records available for this product.",
+        history_period_count=count,
         history=history,
-        future_contract_rows=future_contract_rows,
-        granularity=granularity,
-        forecast_start=normalized_start,
-        horizon=horizon,
         product_type=product_type,
         rice_variety=rice_variety,
-        nonzero_history_period_count=nonzero,
+        granularity=granularity,
     )
 
 

@@ -6,6 +6,8 @@ import {
   CircleAlert,
   Crosshair,
   Droplets,
+  FileDown,
+  FileSpreadsheet,
   LoaderCircle,
   MapPin,
   RefreshCw,
@@ -15,12 +17,13 @@ import {
   ThermometerSun,
   Tractor,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
 import useFarmerForecasting from "../../Components/hooks/Farmer/useFarmerForecasting";
 import Toast from "../../Components/Modals/Toast";
 import useToast from "../../Components/hooks/useToast";
 import { translations, useLanguagePreference } from "../../lib/translations";
 
-const HISTORY_YEAR_OPTIONS = [1, 3, 5];
+const HISTORY_MONTH_OPTIONS = [1, 3, 6];
 const MONTH_LABELS = [
   "Jan",
   "Feb",
@@ -701,12 +704,24 @@ function ForecastHelperIntro({
           ) : (
             <Sparkles size={18} />
           )}
-          Explain it to me
+          {loading ? "Explaining forecast..." : "Explain it to me"}
         </button>
       </div>
       {error ? (
-        <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 break-words">
-          {error}
+        <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <CircleAlert size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <span className="leading-snug">{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClick}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0 cursor-pointer transition disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            Retry
+          </button>
         </div>
       ) : null}
     </div>
@@ -810,9 +825,27 @@ function ForecastHelperExpanded({
           ) : (
             <RefreshCw size={16} />
           )}
-          Explain again
+          {loading ? "Explaining again..." : "Explain it again"}
         </button>
       </div>
+
+      {error ? (
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <CircleAlert size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <span className="leading-snug">{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0 cursor-pointer transition disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       {/* Advisory Disclaimer Banner */}
       <div className="mt-5 flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-900">
@@ -1002,7 +1035,7 @@ export default function ClimateForecasting() {
 
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [activeSelection, setActiveSelection] = useState(null);
-  const [historyYears, setHistoryYears] = useState(3);
+  const [historyMonths, setHistoryMonths] = useState(6);
   const [locationMessage, setLocationMessage] = useState("");
   const { toasts, showToast, removeToast } = useToast();
 
@@ -1222,7 +1255,7 @@ export default function ClimateForecasting() {
 
   // Run Climate Forecast
   const runClimateForecast = useCallback(
-    async (selection, yearsOverride = historyYears) => {
+    async (selection, yearsOverride = 3) => {
       if (!selection?.requestPayload) return null;
       clearAIInterpretation();
       const payload = {
@@ -1238,7 +1271,7 @@ export default function ClimateForecasting() {
       }
       return result;
     },
-    [clearAIInterpretation, generateClimateForecast, historyYears]
+    [clearAIInterpretation, generateClimateForecast]
   );
 
   // Confirm Location Button
@@ -1251,7 +1284,7 @@ export default function ClimateForecasting() {
     }
     setLocationMessage("");
     try {
-      const result = await runClimateForecast(selectedLocation, historyYears);
+      const result = await runClimateForecast(selectedLocation, 3);
       if (result && !result.timeout) {
         showToast({
           type: "success",
@@ -1263,22 +1296,14 @@ export default function ClimateForecasting() {
     } catch {
       // Handled by hook errors
     }
-  }, [historyYears, runClimateForecast, selectedLocation, showToast]);
+  }, [runClimateForecast, selectedLocation, showToast]);
 
-  const handleChangeHistoryYears = useCallback(
-    async (years) => {
-      setHistoryYears(years);
-      if (!activeSelection) return;
-      try {
-        await runClimateForecast(activeSelection, years);
-      } catch {
-        // Handled by hook
-      }
-    },
-    [activeSelection, runClimateForecast]
-  );
+  const handleChangeHistoryMonths = useCallback((months) => {
+    setHistoryMonths(months);
+  }, []);
 
   const handleExplainForecast = useCallback(async () => {
+    if (loading.ai) return;
     const runId = climateForecast?.climate_forecast_run_id;
     if (!runId) return;
     try {
@@ -1286,11 +1311,28 @@ export default function ClimateForecasting() {
         scope: "climate",
         climate_forecast_run_id: runId,
         response_language: "en",
+        force_regenerate: false,
       });
     } catch {
       // Handled by hook
     }
-  }, [climateForecast, generateAIInterpretation]);
+  }, [climateForecast, generateAIInterpretation, loading.ai]);
+
+  const handleExplainAgain = useCallback(async () => {
+    if (loading.ai) return;
+    const runId = climateForecast?.climate_forecast_run_id;
+    if (!runId) return;
+    try {
+      await generateAIInterpretation({
+        scope: "climate",
+        climate_forecast_run_id: runId,
+        response_language: "en",
+        force_regenerate: true,
+      });
+    } catch {
+      // Handled by hook
+    }
+  }, [climateForecast, generateAIInterpretation, loading.ai]);
 
   const forecastRain = useMemo(
     () =>
@@ -1308,26 +1350,19 @@ export default function ClimateForecasting() {
     [climateForecast]
   );
 
-  const historyAnchorMonth =
-    forecastRain[0]?.monthIndex ?? new Date().getMonth();
+  const historicalRain = useMemo(() => {
+    const raw = climateForecast?.historical?.chart_data?.precipitation_mm || [];
+    const normalized = normalizeSeries(raw);
+    if (!normalized.length) return [];
+    return normalized.slice(-historyMonths);
+  }, [climateForecast, historyMonths]);
 
-  const historicalRain = useMemo(
-    () =>
-      buildHistoricalMonthProfile(
-        climateForecast?.historical?.chart_data?.precipitation_mm || [],
-        historyAnchorMonth
-      ),
-    [climateForecast, historyAnchorMonth]
-  );
-
-  const historicalHeat = useMemo(
-    () =>
-      buildHistoricalMonthProfile(
-        climateForecast?.historical?.chart_data?.temperature_c || [],
-        historyAnchorMonth
-      ),
-    [climateForecast, historyAnchorMonth]
-  );
+  const historicalHeat = useMemo(() => {
+    const raw = climateForecast?.historical?.chart_data?.temperature_c || [];
+    const normalized = normalizeSeries(raw);
+    if (!normalized.length) return [];
+    return normalized.slice(-historyMonths);
+  }, [climateForecast, historyMonths]);
 
   const plainRainText = useMemo(
     () => buildRainPlainText(forecastRain),
@@ -1350,6 +1385,507 @@ export default function ClimateForecasting() {
     selectedLocation?.subtitle ||
     t?.forecasting?.climate?.locationDetails ||
     "Location details";
+  // ==========================================================
+  // EXPORT TO CSV
+  // ==========================================================
+  const handleExportCSV = useCallback(() => {
+    if (!climateForecast) return;
+
+    try {
+      const rows = [];
+      const sanitizedLocation = (locationTitle || "Location")
+        .replace(/[^a-zA-Z0-9_-]/g, "_")
+        .replace(/_+/g, "_");
+      const dateStr = new Date().toISOString().split("T")[0];
+      const filename = `GrainRise_Climate_Forecast_${sanitizedLocation}_${dateStr}.csv`;
+
+      const escapeField = (val) => {
+        if (val === null || val === undefined) return '""';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      const latStr = formatCoordinate(activeSelection?.latitude || selectedLocation?.latitude);
+      const lonStr = formatCoordinate(activeSelection?.longitude || selectedLocation?.longitude);
+      const issueDateStr = climateForecast?.forecast_issue_date || dateStr;
+      const coveredMonthsStr = forecastRain.length > 0
+        ? `${forecastRain[0]?.label || ""} - ${forecastRain[forecastRain.length - 1]?.label || ""}`
+        : "6-Month Forecast";
+
+      // 1. Header & Location Metadata
+      rows.push(["GRAINRISE CLIMATE FORECAST REPORT"]);
+      rows.push(["Report Type", "Copernicus CDS 6-Month Climate Forecast & Agronomic Advisory"]);
+      rows.push(["Export Date", dateStr]);
+      rows.push(["Forecast Issue Date", issueDateStr]);
+      rows.push(["Covered Months", coveredMonthsStr]);
+      rows.push(["Location Name", locationTitle]);
+      rows.push(["Address / Locality", locationSubtitle]);
+      rows.push(["Latitude", latStr]);
+      rows.push(["Longitude", lonStr]);
+      rows.push(["Data Source", "Copernicus Climate Data Store (CDS) / ECMWF Seasonal Multi-System"]);
+      rows.push([]);
+
+      // 2. 6-Month Projected Climate Forecast
+      rows.push(["6-MONTH PROJECTED CLIMATE FORECAST"]);
+      rows.push([
+        "Month",
+        "Period Start",
+        "Projected Rainfall (mm)",
+        "Projected Temperature (°C)",
+      ]);
+      forecastRain.forEach((r, idx) => {
+        const h = forecastHeat[idx];
+        const periodStart = r.raw?.period_start || h?.raw?.period_start || "";
+        const rainVal = typeof r.value === "number" ? r.value.toFixed(1) : r.value;
+        const heatVal = h && typeof h.value === "number" ? h.value.toFixed(1) : (h?.value ?? "—");
+        rows.push([r.label || `Month ${idx + 1}`, periodStart, rainVal, heatVal]);
+      });
+      rows.push([]);
+
+      // 3. Historical Weather Observations
+      rows.push([`HISTORICAL WEATHER OBSERVATIONS (${historyMonths} MONTHS ARCHIVE)`]);
+      rows.push([
+        "Month",
+        "Period Start",
+        "Observed Rainfall (mm)",
+        "Observed Temperature (°C)",
+      ]);
+      if (historicalRain.length === 0) {
+        rows.push(["No historical observations available for this range.", "", "", ""]);
+      } else {
+        historicalRain.forEach((r, idx) => {
+          const h = historicalHeat[idx];
+          const periodStart = r.raw?.period_start || h?.raw?.period_start || "";
+          const rainVal = typeof r.value === "number" ? r.value.toFixed(1) : r.value;
+          const heatVal = h && typeof h.value === "number" ? h.value.toFixed(1) : (h?.value ?? "—");
+          rows.push([r.label || `Past Month ${idx + 1}`, periodStart, rainVal, heatVal]);
+        });
+      }
+      rows.push([]);
+
+      // 4. Forecast Summary & Insights (Actual CDS Data)
+      rows.push(["FORECAST SUMMARY & INSIGHTS (DERIVED FROM CDS DATA)"]);
+      if (forecastRain.length > 0) {
+        const highestRain = pickHighest(forecastRain);
+        const lowestRain = pickLowest(forecastRain);
+        const totalRain = forecastRain.reduce((acc, curr) => acc + (curr.value || 0), 0);
+        const avgRain = totalRain / forecastRain.length;
+        rows.push(["Rainfall Outlook Summary", `Peak rain in ${highestRain?.label || ""} (${highestRain?.value?.toFixed(1) || 0} mm); lowest in ${lowestRain?.label || ""} (${lowestRain?.value?.toFixed(1) || 0} mm)`]);
+        rows.push(["6-Month Total Projected Rainfall", `${totalRain.toFixed(1)} mm`]);
+        rows.push(["Monthly Average Projected Rainfall", `${avgRain.toFixed(1)} mm`]);
+      }
+      if (forecastHeat.length > 0) {
+        const highestHeat = pickHighest(forecastHeat);
+        const lowestHeat = pickLowest(forecastHeat);
+        const avgHeat = forecastHeat.reduce((acc, curr) => acc + (curr.value || 0), 0) / forecastHeat.length;
+        rows.push(["Temperature Outlook Summary", `Warmest month in ${highestHeat?.label || ""} (${highestHeat?.value?.toFixed(1) || 0} °C); coolest in ${lowestHeat?.label || ""} (${lowestHeat?.value?.toFixed(1) || 0} °C)`]);
+        rows.push(["6-Month Mean Projected Temperature", `${avgHeat.toFixed(1)} °C`]);
+      }
+      rows.push([]);
+
+      // 5. GrainRise Farm Helper AI Advisory (Only if successfully generated)
+      const hasAI = Boolean(
+        aiInterpretation &&
+        (aiInterpretation.water_and_irrigation ||
+         aiInterpretation.nutrient_management ||
+         aiInterpretation.seasonal_recommendations ||
+         aiInterpretation.explanation_text)
+      );
+
+      if (hasAI) {
+        rows.push(["GRAINRISE FARM HELPER — AGRONOMIC ADVISORY (AI GENERATED)"]);
+        rows.push(["AI Provider / Model", `${aiInterpretation.ai_provider || "Google Gemini"} (${aiInterpretation.ai_model || "gemini-flash-lite"})`]);
+        
+        const waterText = (aiInterpretation.water_and_irrigation || "").trim();
+        if (waterText) {
+          rows.push(["1. Water & Irrigation", waterText]);
+        }
+        
+        const nutrientText = (aiInterpretation.nutrient_management || "").trim();
+        if (nutrientText) {
+          rows.push(["2. Nutrient Management", nutrientText]);
+        }
+        
+        const seasonalText = (aiInterpretation.seasonal_recommendations || "").trim();
+        if (seasonalText) {
+          rows.push(["3. Drought / Rainy Season Farming Recommendations", seasonalText]);
+        }
+
+        const actionsList = splitRecommendationText(aiInterpretation.recommended_actions_text);
+        if (actionsList.length > 0) {
+          rows.push(["Key Practical Action Steps"]);
+          actionsList.forEach((act, aIdx) => {
+            rows.push([`Action ${aIdx + 1}`, act]);
+          });
+        }
+        rows.push([]);
+      }
+
+      // 6. Disclaimer
+      rows.push(["DISCLAIMER"]);
+      rows.push(["Notice", "GrainRise AI and Copernicus CDS climate guidance provide predictive decision-support only. Always corroborate with physical field conditions and local PAGASA / PhilRice bulletins."]);
+
+      const csvContent = "\uFEFF" + rows.map((r) => r.map(escapeField).join(",")).join("\r\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      showToast({
+        type: "success",
+        title: "Report Exported",
+        message: "Climate forecast CSV report downloaded successfully.",
+        duration: 4000,
+      });
+    } catch (err) {
+      console.error("CSV Export error:", err);
+      showToast({
+        type: "error",
+        title: "Export Failed",
+        message: "Failed to generate CSV export. Please try again.",
+        duration: 4000,
+      });
+    }
+  }, [
+    climateForecast,
+    locationTitle,
+    locationSubtitle,
+    activeSelection,
+    selectedLocation,
+    forecastRain,
+    forecastHeat,
+    historicalRain,
+    historicalHeat,
+    historyMonths,
+    aiInterpretation,
+    showToast,
+  ]);
+
+  // ==========================================================
+  // EXPORT TO PDF
+  // ==========================================================
+  const handleExportPDF = useCallback(() => {
+    if (!climateForecast) return;
+
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const primaryColor = [22, 101, 52]; // Dark green (#166534)
+      const slateDark = [15, 23, 42];
+      const slateMedium = [51, 65, 85];
+      const slateLight = [100, 116, 139];
+      const borderGray = [226, 232, 240];
+      const tableHeaderBg = [241, 245, 249];
+      const zebraBg = [248, 250, 252];
+
+      const sanitizedLocation = (locationTitle || "Location")
+        .replace(/[^a-zA-Z0-9_-]/g, "_")
+        .replace(/_+/g, "_");
+      const dateStr = new Date().toISOString().split("T")[0];
+      const filename = `GrainRise_Climate_Forecast_${sanitizedLocation}_${dateStr}.pdf`;
+
+      let y = 0;
+
+      const checkPageBreak = (neededHeight) => {
+        if (y + neededHeight > 275) {
+          doc.addPage();
+          y = 20;
+          return true;
+        }
+        return false;
+      };
+
+      // Header Banner
+      doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.rect(0, 0, 210, 24, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(255, 255, 255);
+      doc.text("GRAINRISE CLIMATE FORECAST REPORT", 14, 11);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(230, 245, 235);
+      doc.text("Copernicus CDS Seasonal Forecast & Agronomic Advisory", 14, 18);
+      doc.text(`Export Date: ${dateStr}`, 155, 18);
+
+      y = 32;
+
+      // Location & Coordinates Box
+      doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
+      doc.setFillColor(zebraBg[0], zebraBg[1], zebraBg[2]);
+      doc.roundedRect(14, y, 182, 22, 2, 2, "FD");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text(`Location: ${locationTitle}`, 18, y + 6);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(slateMedium[0], slateMedium[1], slateMedium[2]);
+      const subtitleLines = doc.splitTextToSize(`Address: ${locationSubtitle}`, 174);
+      doc.text(subtitleLines[0] || "", 18, y + 11);
+
+      const latStr = formatCoordinate(activeSelection?.latitude || selectedLocation?.latitude);
+      const lonStr = formatCoordinate(activeSelection?.longitude || selectedLocation?.longitude);
+      const issueDateStr = climateForecast?.forecast_issue_date || dateStr;
+      const coveredMonthsStr = forecastRain.length > 0
+        ? `${forecastRain[0]?.label || ""} - ${forecastRain[forecastRain.length - 1]?.label || ""}`
+        : "6-Month Forecast";
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(slateLight[0], slateLight[1], slateLight[2]);
+      doc.text(`Coordinates: Lat ${latStr}, Lon ${lonStr}  |  Issued: ${issueDateStr}  |  Covered: ${coveredMonthsStr}  |  Source: Copernicus CDS`, 18, y + 17);
+
+      y += 28;
+
+      // SECTION 1: 6-Month Projected Climate Forecast Table
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text("1. 6-MONTH PROJECTED CLIMATE FORECAST (COPERNICUS CDS)", 14, y);
+      y += 4;
+
+      // Table Header
+      doc.setFillColor(tableHeaderBg[0], tableHeaderBg[1], tableHeaderBg[2]);
+      doc.rect(14, y, 182, 6.5, "F");
+      doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
+      doc.line(14, y + 6.5, 196, y + 6.5);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text("Month", 18, y + 4.5);
+      doc.text("Period Start", 60, y + 4.5);
+      doc.text("Projected Rainfall (mm)", 110, y + 4.5);
+      doc.text("Projected Temperature (°C)", 155, y + 4.5);
+      y += 6.5;
+
+      // Rows
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      forecastRain.forEach((r, idx) => {
+        const h = forecastHeat[idx];
+        const periodStart = r.raw?.period_start || h?.raw?.period_start || "—";
+        const rainVal = typeof r.value === "number" ? `${r.value.toFixed(1)} mm` : `${r.value} mm`;
+        const heatVal = h && typeof h.value === "number" ? `${h.value.toFixed(1)} °C` : (h ? `${h.value} °C` : "—");
+
+        if (idx % 2 === 1) {
+          doc.setFillColor(zebraBg[0], zebraBg[1], zebraBg[2]);
+          doc.rect(14, y, 182, 5.5, "F");
+        }
+        doc.setTextColor(slateMedium[0], slateMedium[1], slateMedium[2]);
+        doc.text(r.label || `Month ${idx + 1}`, 18, y + 4);
+        doc.text(periodStart, 60, y + 4);
+        doc.text(rainVal, 110, y + 4);
+        doc.text(heatVal, 155, y + 4);
+        y += 5.5;
+      });
+
+      y += 3;
+
+      // Forecast Summary Callout
+      if (forecastRain.length > 0 || forecastHeat.length > 0) {
+        const highestRain = pickHighest(forecastRain);
+        const lowestRain = pickLowest(forecastRain);
+        const highestHeat = pickHighest(forecastHeat);
+        const lowestHeat = pickLowest(forecastHeat);
+
+        doc.setFillColor(248, 252, 248);
+        doc.setDrawColor(210, 235, 215);
+        doc.roundedRect(14, y, 182, 13, 1.5, 1.5, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.5);
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.text("Forecast Insights:", 18, y + 4.5);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(slateMedium[0], slateMedium[1], slateMedium[2]);
+        const rainSummary = `Rainfall: Peak in ${highestRain?.label || "—"} (${highestRain?.value?.toFixed(1) || 0} mm), Lowest in ${lowestRain?.label || "—"} (${lowestRain?.value?.toFixed(1) || 0} mm)`;
+        const heatSummary = `Temperature: Warmest in ${highestHeat?.label || "—"} (${highestHeat?.value?.toFixed(1) || 0} °C), Coolest in ${lowestHeat?.label || "—"} (${lowestHeat?.value?.toFixed(1) || 0} °C)`;
+        doc.text(rainSummary, 18, y + 8);
+        doc.text(heatSummary, 18, y + 11.5);
+
+        y += 18;
+      }
+
+      checkPageBreak(35);
+
+      // SECTION 2: Historical Weather Observations Table
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text(`2. HISTORICAL WEATHER OBSERVATIONS (${historyMonths} MONTHS ARCHIVE)`, 14, y);
+      y += 4;
+
+      doc.setFillColor(tableHeaderBg[0], tableHeaderBg[1], tableHeaderBg[2]);
+      doc.rect(14, y, 182, 6.5, "F");
+      doc.setDrawColor(borderGray[0], borderGray[1], borderGray[2]);
+      doc.line(14, y + 6.5, 196, y + 6.5);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text("Month", 18, y + 4.5);
+      doc.text("Period Start", 60, y + 4.5);
+      doc.text("Observed Rainfall (mm)", 110, y + 4.5);
+      doc.text("Observed Temperature (°C)", 155, y + 4.5);
+      y += 6.5;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      if (historicalRain.length === 0) {
+        doc.setTextColor(slateLight[0], slateLight[1], slateLight[2]);
+        doc.text("No historical weather observations recorded for this filter.", 18, y + 4);
+        y += 6;
+      } else {
+        historicalRain.forEach((r, idx) => {
+          const h = historicalHeat[idx];
+          const periodStart = r.raw?.period_start || h?.raw?.period_start || "—";
+          const rainVal = typeof r.value === "number" ? `${r.value.toFixed(1)} mm` : `${r.value} mm`;
+          const heatVal = h && typeof h.value === "number" ? `${h.value.toFixed(1)} °C` : (h ? `${h.value} °C` : "—");
+
+          if (idx % 2 === 1) {
+            doc.setFillColor(zebraBg[0], zebraBg[1], zebraBg[2]);
+            doc.rect(14, y, 182, 5.5, "F");
+          }
+          doc.setTextColor(slateMedium[0], slateMedium[1], slateMedium[2]);
+          doc.text(r.label || `Past Month ${idx + 1}`, 18, y + 4);
+          doc.text(periodStart, 60, y + 4);
+          doc.text(rainVal, 110, y + 4);
+          doc.text(heatVal, 155, y + 4);
+          y += 5.5;
+        });
+      }
+
+      y += 6;
+
+      // SECTION 3: GrainRise Farm Helper AI Recommendations (Only if successfully generated)
+      const hasAI = Boolean(
+        aiInterpretation &&
+        (aiInterpretation.water_and_irrigation ||
+         aiInterpretation.nutrient_management ||
+         aiInterpretation.seasonal_recommendations ||
+         aiInterpretation.explanation_text)
+      );
+
+      if (hasAI) {
+        checkPageBreak(50);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10.5);
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.text("3. GRAINRISE FARM HELPER — AGRONOMIC ADVISORY", 14, y);
+        y += 4;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(slateLight[0], slateLight[1], slateLight[2]);
+        doc.text(`AI Model: ${aiInterpretation.ai_model || "gemini-flash-lite"} | PhilRice Validated Agricultural Standards`, 14, y);
+        y += 5;
+
+        const renderAISection = (title, content) => {
+          if (!content) return;
+          checkPageBreak(25);
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8.5);
+          doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+          doc.text(`• ${title}`, 14, y);
+          y += 4;
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(slateMedium[0], slateMedium[1], slateMedium[2]);
+          const lines = doc.splitTextToSize(content, 182);
+          lines.forEach((line) => {
+            checkPageBreak(6);
+            doc.text(line, 14, y);
+            y += 3.8;
+          });
+          y += 2.5;
+        };
+
+        const waterContent = (aiInterpretation.water_and_irrigation || "").trim();
+        if (waterContent) {
+          renderAISection("Water & Irrigation", waterContent);
+        }
+
+        const nutrientContent = (aiInterpretation.nutrient_management || "").trim();
+        if (nutrientContent) {
+          renderAISection("Nutrient Management", nutrientContent);
+        }
+
+        const seasonalContent = (aiInterpretation.seasonal_recommendations || "").trim();
+        if (seasonalContent) {
+          renderAISection("Drought / Rainy Season Farming Recommendations", seasonalContent);
+        }
+      }
+
+      // Official Disclaimer Footer at the bottom
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(slateLight[0], slateLight[1], slateLight[2]);
+      const footerY = Math.max(y + 6, 282);
+      if (footerY > 285) {
+        doc.addPage();
+        doc.text(
+          "Disclaimer: GrainRise AI and Copernicus CDS climate guidance provide predictive decision-support only. Always corroborate with physical field conditions.",
+          14,
+          284
+        );
+      } else {
+        doc.text(
+          "Disclaimer: GrainRise AI and Copernicus CDS climate guidance provide predictive decision-support only. Always corroborate with physical field conditions.",
+          14,
+          footerY
+        );
+      }
+
+      doc.save(filename);
+      showToast({
+        type: "success",
+        title: "Report Exported",
+        message: "Climate forecast PDF report has been downloaded.",
+        duration: 4000,
+      });
+    } catch (err) {
+      console.error("PDF Export error:", err);
+      showToast({
+        type: "error",
+        title: "Export Failed",
+        message: "Failed to generate PDF. Please try again.",
+        duration: 4000,
+      });
+    }
+  }, [
+    climateForecast,
+    locationTitle,
+    locationSubtitle,
+    activeSelection,
+    selectedLocation,
+    forecastRain,
+    forecastHeat,
+    historicalRain,
+    historicalHeat,
+    historyMonths,
+    aiInterpretation,
+    showToast,
+  ]);
+
 
   if (screenMode === "select") {
     return (
@@ -1680,23 +2216,48 @@ export default function ClimateForecasting() {
   // SCREEN MODE: "forecast"
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col gap-3">
         <div>
-          <h3 className="font-bold text-slate-900 text-2xl">
-            Climate Forecast
-          </h3>
-          <p className="text-slate-500 mt-2">
-            A simpler view of the forecast so farmers can understand it faster.
-          </p>
+          <button
+            type="button"
+            onClick={() => setScreenMode("select")}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-700 hover:text-green-800 cursor-pointer transition hover:-translate-x-0.5"
+          >
+            ← Change Location
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setScreenMode("select")}
-          className="inline-flex items-center gap-2 text-sm font-semibold text-green-700 hover:text-green-800 cursor-pointer"
-        >
-          Change Location
-          <ArrowRight size={16} />
-        </button>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-slate-900 text-2xl">
+              Climate Forecast
+            </h3>
+            <p className="text-slate-500 mt-1">
+              A simpler view of the forecast so farmers can understand it faster.
+            </p>
+          </div>
+          <div className="flex items-center gap-2.5 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              disabled={!climateForecast || loading.climate}
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-600 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-sm transition hover:bg-emerald-100 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export forecast details to CSV"
+            >
+              <FileSpreadsheet size={14} className="text-emerald-700" />
+              <span>Export CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportPDF}
+              disabled={!climateForecast || loading.climate}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-900 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export forecast details to PDF"
+            >
+              <FileDown size={14} />
+              <span>Export PDF</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="rounded-[28px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
@@ -1775,7 +2336,7 @@ export default function ClimateForecasting() {
                 type="button"
                 onClick={() => {
                   if (activeSelection || selectedLocation) {
-                    runClimateForecast(activeSelection || selectedLocation, historyYears);
+                    runClimateForecast(activeSelection || selectedLocation, 3);
                   }
                 }}
                 className="inline-flex items-center gap-2 rounded-xl bg-green-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-green-800 transition cursor-pointer"
@@ -1852,14 +2413,14 @@ export default function ClimateForecasting() {
                   How the weather has been
                 </h4>
                 <div className="inline-flex items-center rounded-full bg-slate-100 p-1">
-                  {HISTORY_YEAR_OPTIONS.map((year) => (
+                  {HISTORY_MONTH_OPTIONS.map((months) => (
                     <YearPill
-                      key={year}
-                      active={historyYears === year}
-                      onClick={() => handleChangeHistoryYears(year)}
-                      disabled={loading.climate}
+                      key={months}
+                      active={historyMonths === months}
+                      onClick={() => handleChangeHistoryMonths(months)}
+                      disabled={loading.climate || loading.ai}
                     >
-                      {year} year{year > 1 ? "s" : ""}
+                      {months} {months === 1 ? "Month" : "Months"}
                     </YearPill>
                   ))}
                 </div>
@@ -1894,7 +2455,7 @@ export default function ClimateForecasting() {
                   climateForecast={climateForecast}
                   locationName={locationTitle}
                   climateNote={climateForecast?.soil_land_note}
-                  onRefresh={handleExplainForecast}
+                  onRefresh={handleExplainAgain}
                   loading={loading.ai}
                   error={errors.ai}
                   t={t}

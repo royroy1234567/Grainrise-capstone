@@ -107,14 +107,8 @@ def _load_env_file(path: Path) -> None:
 
 
 
-        # For local GrainRise development, backend/.env is the
-
-        # authoritative configuration file.  Overwrite any stale value
-
-        # inherited by Django's autoreloader/terminal so editing .env
-
-        # actually takes effect after the server restarts.
-
+        # Ensure production/Render environment variables take precedence,
+        # while backend/.env provides defaults for local development.
         os.environ.setdefault(key, value)
 
 
