@@ -12,6 +12,8 @@ import ArchiveProductModal from "../../Components/Modals/ArchiveProductModal";
 import RestoreProductModal from "../../Components/Modals/RestoreProductModal";
 import DeleteProductModal from "../../Components/Modals/DeleteProductModal";
 import AddProductModal from "../../Components/Modals/AddProductModal";
+import Toast from "../../Components/Modals/Toast";
+import useToast from "../../Components/hooks/useToast";
 
 const API = `${(import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "")}/api`;
 const TABS = [{ id: "active", label: "Active" }, { id: "archive", label: "Archived" }];
@@ -89,6 +91,7 @@ function ProductModal({ product, mode, onClose, onSave }) {
 }
 
 export default function RetailerInventory() {
+  const { toasts, showToast, removeToast } = useToast();
   const [products, setProducts] = useState([]);
   const [tab, setTab] = useState("active");
   const [search, setSearch] = useState("");
@@ -97,13 +100,48 @@ export default function RetailerInventory() {
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(null);
   const load = async () => { const result = await request(`/retailer/inventory/?status=${tab === "archive" ? "archived" : "active"}`); setProducts(result.data || []); };
-  useEffect(() => { load().catch((error) => window.alert(error.message)); }, [tab]);
+  useEffect(() => {
+    load().catch((error) => {
+      showToast({
+        type: "error",
+        title: "Error",
+        message: error?.response?.data?.message || error?.message || "Failed to load inventory.",
+        duration: 5000,
+      });
+    });
+  }, [tab]);
   const visible = useMemo(() => {
     const query = search.toLowerCase();
     return products.filter((p) => (!query || [p.product_code, p.variant, p.product_description].some((v) => String(v || "").toLowerCase().includes(query))) && (tab === "archive" || stockFilter === "all" || p.stock_status === { in: "In Stock", low: "Low Stock", none: "Out of Stock" }[stockFilter])).sort((a, b) => { const av = String(a.variant || a.product_name || ""); const bv = String(b.variant || b.product_name || ""); if (sort === "stock-desc" || sort === "stock-asc") return (Number(a.stock_quantity) - Number(b.stock_quantity)) * (sort === "stock-desc" ? -1 : 1); return av.localeCompare(bv) * (sort === "name-desc" ? -1 : 1); });
   }, [products, search, sort, stockFilter, tab]);
-  const refresh = () => load().catch((error) => window.alert(error.message));
-  const action = async (path, options) => { try { await request(path, options); setModal(null); refresh(); } catch (error) { window.alert(error.message); } };
+  const refresh = () => load().catch((error) => {
+    showToast({
+      type: "error",
+      title: "Error",
+      message: error?.response?.data?.message || error?.message || "Failed to refresh inventory.",
+      duration: 5000,
+    });
+  });
+  const action = async (path, options, successMessage) => {
+    try {
+      await request(path, options);
+      setModal(null);
+      await refresh();
+      showToast({
+        type: "success",
+        title: "Success",
+        message: successMessage,
+        duration: 4000,
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Error",
+        message: error?.response?.data?.message || error?.message || "Inventory action failed.",
+        duration: 5000,
+      });
+    }
+  };
   const columns = tab === "archive" ? [
     { key: "variant", label: "Product Name", render: (p) => <><b>{p.variant || p.product_name}</b><div className="text-[10px] text-gray-500">{p.product_code}</div></> },
     { key: "expiry_date", label: "Expiry Date", render: (p) => p.expiry_date || "—" },
@@ -121,7 +159,7 @@ export default function RetailerInventory() {
   ];
   return <><Breadcrumbs items={[{ label: "Inventory", path: "/retailer/inventory" }, { label: "Inventory" }]} /><div className="mb-6"><h1 className="text-2xl font-bold">Inventory</h1><p className="mt-1 text-sm text-gray-500">Manage your inventory and monitor stock levels.</p></div><Tabs tabs={TABS} activeTab={tab} onTabChange={(id) => { setTab(id); setPage(1); }} /><div className="mb-4 flex flex-wrap items-center gap-3"><div className="w-full max-w-sm"><SearchFilter onSearch={(value) => { setSearch(value); setPage(1); }} placeholder="Search product code, variant, or description" /></div>{tab === "active" && <select value={stockFilter} onChange={(e) => setStockFilter(e.target.value)} className="rounded-lg border px-3 py-2 text-xs"><option value="all">All Stock</option><option value="in">In Stock</option><option value="low">Low Stock</option><option value="none">No Stock</option></select>}<SortByDropdown value={sort} onChange={setSort} options={SORT_OPTIONS} />{tab === "active" && <button onClick={() => setModal({ type: "add" })} className="ml-auto rounded-lg bg-[#00580C] px-4 py-2 text-xs font-semibold text-white">Add Product</button>}</div><SectionedTableCard columns={columns} sections={[{ rows: visible.slice((page - 1) * 10, page * 10) }]} currentPage={page} totalPages={Math.max(1, Math.ceil(visible.length / 10))} onPageChange={setPage} footerLabel={`Showing ${Math.min(visible.length, (page - 1) * 10 + 1)}-${Math.min(page * 10, visible.length)} of ${visible.length} products`} />
     {modal?.type === "view" && <ProductModal product={modal.product} mode="view" onClose={() => setModal(null)} onSave={(value) => value === "__edit__" ? setModal({ ...modal, type: "edit" }) : null} />}
-    {modal?.type === "edit" && <ProductModal product={modal.product} mode="edit" onClose={() => setModal({ ...modal, type: "view" })} onSave={(data) => action(`/retailer/inventory/${modal.product.id}/`, { method: "PATCH", body: JSON.stringify(data) })} />}
-    {modal?.type === "add" && <AddProductModal isOpen supplierFreeText onClose={() => setModal(null)} onSave={(data) => action("/retailer/inventory/", { method: "POST", body: JSON.stringify({ product_name: data.variant, variant: data.variant, nongrainrise_supplier_name: data.supplier, product_image: data.imageName, stock_quantity: data.stockQuantity, unit_cost: data.unitCost, selling_price: data.sellingPrice, order_date: data.orderDate, arrival_date: data.arrivalDate, expiry_date: data.expirationDate, product_description: data.descriptionText }) })} />}
-    <ArchiveProductModal isOpen={modal?.type === "archive"} onClose={() => setModal(null)} productName={modal?.product?.variant || "Product"} onArchive={(reason) => action(`/retailer/inventory/${modal.product.id}/archive/`, { method: "POST", body: JSON.stringify({ reason }) })} /><RestoreProductModal isOpen={modal?.type === "restore"} onClose={() => setModal(null)} productName={modal?.product?.variant || "Product"} onRestore={() => action(`/retailer/inventory/${modal.product.id}/restore/`, { method: "POST" })} /><DeleteProductModal isOpen={modal?.type === "delete"} onClose={() => setModal(null)} productName={modal?.product?.variant || "Product"} onDelete={() => action(`/retailer/inventory/${modal.product.id}/`, { method: "DELETE" })} /></>;
+    {modal?.type === "edit" && <ProductModal product={modal.product} mode="edit" onClose={() => setModal({ ...modal, type: "view" })} onSave={(data) => action(`/retailer/inventory/${modal.product.id}/`, { method: "PATCH", body: JSON.stringify(data) }, "Product updated successfully.")} />}
+    {modal?.type === "add" && <AddProductModal isOpen supplierFreeText onClose={() => setModal(null)} onSave={(data) => action("/retailer/inventory/", { method: "POST", body: JSON.stringify({ product_name: data.variant, variant: data.variant, nongrainrise_supplier_name: data.supplier, product_image: data.imageName, stock_quantity: data.stockQuantity, unit_cost: data.unitCost, selling_price: data.sellingPrice, order_date: data.orderDate, arrival_date: data.arrivalDate, expiry_date: data.expirationDate, product_description: data.descriptionText }) }, "Product added successfully.")} />}
+    <ArchiveProductModal isOpen={modal?.type === "archive"} onClose={() => setModal(null)} productName={modal?.product?.variant || "Product"} onArchive={(reason) => action(`/retailer/inventory/${modal.product.id}/archive/`, { method: "POST", body: JSON.stringify({ reason }) }, "Product archived successfully.")} /><RestoreProductModal isOpen={modal?.type === "restore"} onClose={() => setModal(null)} productName={modal?.product?.variant || "Product"} onRestore={() => action(`/retailer/inventory/${modal.product.id}/restore/`, { method: "POST" }, "Product restored successfully.")} /><DeleteProductModal isOpen={modal?.type === "delete"} onClose={() => setModal(null)} productName={modal?.product?.variant || "Product"} onDelete={() => action(`/retailer/inventory/${modal.product.id}/`, { method: "DELETE" }, "Product deleted successfully.")} /><Toast toasts={toasts} removeToast={removeToast} /></>;
 }
