@@ -20,7 +20,7 @@ import CustomGreenButton from "../../../Components/Minor-Components/CustomGreenB
 import CustomAmberButton from "../../../Components/Minor-Components/CustomAmberButton";
 import CustomRedButton from "../../../Components/Minor-Components/CustomRedButton";
 
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 
 import FarmerReviewModal from "../../../Components/Modals/FarmerReviewModal";
 import FarmerDetailsModal from "../../../Components/Modals/FarmerDetailsModal";
@@ -342,7 +342,7 @@ const FarmerManagement = () => {
         );
 
       } catch (
-        requestError
+      requestError
       ) {
         setReviewModal(
           false
@@ -491,7 +491,7 @@ const FarmerManagement = () => {
         });
 
       } catch (
-        requestError
+      requestError
       ) {
         showToast({
           type:
@@ -596,7 +596,7 @@ const FarmerManagement = () => {
         );
 
       } catch (
-        requestError
+      requestError
       ) {
         setDetailsModal(
           false
@@ -706,7 +706,7 @@ const FarmerManagement = () => {
         });
 
       } catch (
-        requestError
+      requestError
       ) {
         showToast({
           type:
@@ -784,7 +784,7 @@ const FarmerManagement = () => {
         });
 
       } catch (
-        requestError
+      requestError
       ) {
         showToast({
           type:
@@ -862,7 +862,7 @@ const FarmerManagement = () => {
         });
 
       } catch (
-        requestError
+      requestError
       ) {
         showToast({
           type:
@@ -1556,25 +1556,25 @@ const FarmerManagement = () => {
 
   const firstVisible =
     filteredRows.length ===
-    0
+      0
       ? 0
       : (
-          safeCurrentPage -
-          1
-        ) *
-          ITEMS_PER_PAGE +
-        1;
+        safeCurrentPage -
+        1
+      ) *
+      ITEMS_PER_PAGE +
+      1;
 
 
   const lastVisible =
     filteredRows.length ===
-    0
+      0
       ? 0
       : Math.min(
-          safeCurrentPage *
-          ITEMS_PER_PAGE,
-          filteredRows.length
-        );
+        safeCurrentPage *
+        ITEMS_PER_PAGE,
+        filteredRows.length
+      );
 
 
   // =========================================================
@@ -1605,29 +1605,28 @@ const FarmerManagement = () => {
                 py-0.5
                 text-xs
                 font-semibold
-                ${
-                  TAB_BADGE_STYLES[
-                    tab.id
-                  ]
+                ${TAB_BADGE_STYLES[
+                tab.id
+                ]
                 }
               `}
             >
               {
                 tab.id ===
-                "to-review"
+                  "to-review"
                   ? counts
-                      ?.to_review ||
-                    0
+                    ?.to_review ||
+                  0
 
                   : tab.id ===
                     "active"
                     ? counts
-                        ?.active ||
-                      0
+                      ?.active ||
+                    0
 
                     : counts
-                        ?.inactive ||
-                      0
+                      ?.inactive ||
+                    0
               }
             </span>
           </>

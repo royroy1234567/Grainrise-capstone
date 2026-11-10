@@ -16,7 +16,7 @@ import Dropdown from "../../../Components/Minor-Components/Dropdown";
 import RichTextEditor from "../../../Components/Minor-Components/RichTextEditor";
 import useAuth from "../../../Components/hooks/useAuth";
 import useToast from "../../../Components/hooks/useToast";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 const getAuthToken = () => {
   return (
     localStorage.getItem("grainrise_token") ||

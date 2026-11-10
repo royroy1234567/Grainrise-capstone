@@ -15,7 +15,7 @@ import Breadcrumbs from "../../../Components/Minor-Components/Breadcrumbs";
 import SectionedTableCard from "../../../Components/Minor-Components/SectionedTableCard";
 import Tabs from "../../../Components/Minor-Components/Tabs";
 import useToast from "../../../Components/hooks/useToast";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 

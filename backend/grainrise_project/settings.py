@@ -10,6 +10,7 @@ import os
 
 
 from django.core.exceptions import ImproperlyConfigured
+from corsheaders.defaults import default_headers
 
 
 
@@ -315,6 +316,9 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+# The retailer POS uses this header to make checkout retries idempotent.
+CORS_ALLOW_HEADERS = [*default_headers, "x-idempotency-key"]
 
 CSRF_TRUSTED_ORIGINS = list(
     dict.fromkeys(
@@ -829,5 +833,4 @@ REST_FRAMEWORK = {
     ],
 
 }
-
 

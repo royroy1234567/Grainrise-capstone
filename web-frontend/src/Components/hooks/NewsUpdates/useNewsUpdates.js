@@ -404,7 +404,7 @@ export default function useNewsUpdates() {
 
   const loadNewsArticle =
     useCallback(
-      async (newsId, itemType = "news") => {
+      async (newsId) => {
         if (!newsId) {
           throw new Error(
             "Invalid news article ID."
@@ -565,7 +565,7 @@ export default function useNewsUpdates() {
 
   const toggleNewsLike =
     useCallback(
-      async (newsId) => {
+      async (newsId, itemType = "news") => {
         setIsSaving(true);
         setActionError("");
 

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Breadcrumbs from "../Minor-Components/Breadcrumbs";
-import Toast from "../Minor-Components/Toast";
+import Toast from "../Modals/Toast";
 import Dropdown from "../Minor-Components/Dropdown";
 import useToast from "../hooks/useToast";
 import useApi from "../hooks/useApi";
@@ -482,10 +482,6 @@ export default function UserAccountProfile() {
         barangay,
         postalCode,
       });
-      setManualProvince(province);
-      setManualMunicipality(municipality);
-      setManualBarangay(barangay);
-      setManualPostalCode(postalCode);
     }
 
     setAccountSecurity({
@@ -1063,8 +1059,8 @@ export default function UserAccountProfile() {
           {/* ── Personal Information Section ───────────────────────────────── */}
           <div
             className={`border rounded-xl p-6 shadow-sm space-y-4 transition-all duration-200 ${isEditingPersonal
-                ? "bg-emerald-50/30 border-emerald-300 ring-2 ring-emerald-500/20"
-                : "bg-white border-slate-200"
+              ? "bg-emerald-50/30 border-emerald-300 ring-2 ring-emerald-500/20"
+              : "bg-white border-slate-200"
               }`}
           >
             <div className="flex items-center justify-between pb-2 border-b border-gray-200/80">
@@ -1154,10 +1150,10 @@ export default function UserAccountProfile() {
                   }}
                   placeholder="Letters only"
                   className={`w-full px-3.5 py-2.5 rounded-lg text-sm font-semibold outline-none transition ${isEditingPersonal
-                      ? personalTouched.firstName && personalErrors.firstName
-                        ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
-                        : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
-                      : "bg-gray-100/80 border border-transparent text-gray-800 disabled:opacity-90"
+                    ? personalTouched.firstName && personalErrors.firstName
+                      ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
+                      : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                    : "bg-gray-100/80 border border-transparent text-gray-800 disabled:opacity-90"
                     }`}
                 />
                 {isEditingPersonal && personalTouched.firstName && personalErrors.firstName && (
@@ -1214,10 +1210,10 @@ export default function UserAccountProfile() {
                   }}
                   placeholder="M.I."
                   className={`w-full px-3.5 py-2.5 rounded-lg text-sm font-semibold outline-none transition ${isEditingPersonal
-                      ? personalTouched.middleInitial && personalErrors.middleInitial
-                        ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
-                        : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
-                      : "bg-gray-100/80 border border-transparent text-gray-800 disabled:opacity-90"
+                    ? personalTouched.middleInitial && personalErrors.middleInitial
+                      ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
+                      : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                    : "bg-gray-100/80 border border-transparent text-gray-800 disabled:opacity-90"
                     }`}
                 />
                 {isEditingPersonal &&
@@ -1264,10 +1260,10 @@ export default function UserAccountProfile() {
                   }}
                   placeholder="Letters only"
                   className={`w-full px-3.5 py-2.5 rounded-lg text-sm font-semibold outline-none transition ${isEditingPersonal
-                      ? personalTouched.lastName && personalErrors.lastName
-                        ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
-                        : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
-                      : "bg-gray-100/80 border border-transparent text-gray-800 disabled:opacity-90"
+                    ? personalTouched.lastName && personalErrors.lastName
+                      ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
+                      : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                    : "bg-gray-100/80 border border-transparent text-gray-800 disabled:opacity-90"
                     }`}
                 />
                 {isEditingPersonal && personalTouched.lastName && personalErrors.lastName && (
@@ -1364,8 +1360,8 @@ export default function UserAccountProfile() {
           {/* ── Address Information Section (Philippine PSGC Location API) ─── */}
           <div
             className={`border rounded-xl p-6 shadow-sm space-y-4 transition-all duration-200 ${isEditingAddress
-                ? "bg-emerald-50/30 border-emerald-300 ring-2 ring-emerald-500/20"
-                : "bg-white border-slate-200"
+              ? "bg-emerald-50/30 border-emerald-300 ring-2 ring-emerald-500/20"
+              : "bg-white border-slate-200"
               }`}
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-gray-200/80">
@@ -1597,8 +1593,8 @@ export default function UserAccountProfile() {
                     onChange={handlePostalCodeChange}
                     placeholder="4 digits"
                     className={`w-full px-3.5 py-2.5 rounded-lg text-sm font-semibold outline-none transition ${addressTouched.postalCode && addressErrors.postalCode
-                        ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
-                        : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                      ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
+                      : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
                       }`}
                   />
                   {addressTouched.postalCode && addressErrors.postalCode && (
@@ -1633,8 +1629,8 @@ export default function UserAccountProfile() {
                     }}
                     placeholder="Street Address, Building, House No."
                     className={`w-full px-3.5 py-2.5 rounded-lg text-sm font-semibold outline-none transition ${addressTouched.streetAddress && addressErrors.streetAddress
-                        ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
-                        : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                      ? "bg-white border-2 border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
+                      : "bg-white border-2 border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
                       }`}
                   />
                   {addressTouched.streetAddress && addressErrors.streetAddress && (
@@ -1672,8 +1668,8 @@ export default function UserAccountProfile() {
                         onChange={(e) => handleEmailChangeInternal(e.target.value)}
                         placeholder="user@example.com"
                         className={`w-full px-3.5 py-2.5 rounded-lg text-sm font-semibold outline-none transition bg-white border-2 ${emailError
-                            ? "border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
-                            : "border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
+                          ? "border-red-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-red-200"
+                          : "border-emerald-500 text-gray-900 shadow-sm focus:ring-2 focus:ring-emerald-200"
                           }`}
                       />
                     </div>
@@ -1753,8 +1749,8 @@ export default function UserAccountProfile() {
                   <div className="space-y-1.5">
                     <div
                       className={`flex items-center rounded-lg border-2 overflow-hidden transition bg-white shadow-sm ${phoneError
-                          ? "border-red-500 focus-within:ring-2 focus-within:ring-red-200"
-                          : "border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200"
+                        ? "border-red-500 focus-within:ring-2 focus-within:ring-red-200"
+                        : "border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200"
                         }`}
                     >
                       <span className="px-3 py-2.5 text-sm font-bold text-slate-700 bg-slate-100 border-r border-slate-300 select-none whitespace-nowrap">

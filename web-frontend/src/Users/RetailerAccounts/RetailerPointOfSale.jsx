@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import POSProductCard from "../../Components/Minor-Components/POSProductCard";
 import POSCartCard from "../../Components/Minor-Components/POSCartCard";
 import PaginationControls from "../../Components/Minor-Components/PaginationControls";
@@ -6,397 +6,90 @@ import SearchFilter from "../../Components/Minor-Components/SearchFilter";
 import SortByDropdown from "../../Components/Minor-Components/SortByDropdown";
 import CustomGreenButton from "../../Components/Minor-Components/CustomGreenButton";
 import Breadcrumbs from "../../Components/Minor-Components/Breadcrumbs";
-import { ChevronDown } from "lucide-react";
+import useToast from "../../Components/hooks/useToast";
+import Toast from "../../Components/Modals/Toast";
+import POSPaymentProofModal from "../../Components/Modals/MillerSales/POSPaymentProofModal";
+import POSSalesReceiptModal from "../../Components/Modals/MillerSales/POSSalesReceiptModal";
 
-// ---------------------------------------------------------------------------
-// Sample retailer inventory data (replace with real API call later)
-// ---------------------------------------------------------------------------
-const sampleProducts = Array.from({ length: 18 }, (_, i) => ({
-  id: `rp-${i + 1}`,
-  name: [
-    "Dinorado Rice",
-    "Sinandomeng Rice",
-    "Jasmine Rice",
-    "Brown Rice",
-    "Malagkit Rice",
-    "Quinoa Blend",
-  ][i % 6],
-  sku: `RT-${String(i + 1).padStart(3, "0")}`,
-  price: [1500, 1350, 1800, 1650, 2000, 2200][i % 6],
-  unitLabel: "Per Sack",
-  stockAvailable: Math.max(0, 300 - i * 12),
-}));
+const API = `${(import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "")}/api`;
+const auth = () => localStorage.getItem("grainrise_token") || localStorage.getItem("access_token") || "";
+const request = async (path, options = {}) => {
+  const response = await fetch(`${API}${path}`, { ...options, headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${auth()}`, ...(options.headers || {}) } });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || data.message || "POS request failed.");
+  return data;
+};
+const idempotency = () => `retailer-pos-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
+const stockFilters = [{ value: "all", label: "All" }, { value: "in-stock", label: "In Stock" }, { value: "low-stock", label: "Low Stock" }];
 
-const stockFilterOptions = [
-  { value: "all", label: "All" },
-  { value: "in-stock", label: "In Stock" },
-  { value: "low-stock", label: "Low Stock" },
-];
-
-const paymentMethods = ["Cash on Delivery", "GCash", "Bank Transfer", "Credit Card"];
-
-const PRODUCTS_PER_PAGE = 9;
-const LOW_STOCK_THRESHOLD = 50;
-
-// ---------------------------------------------------------------------------
 export default function RetailerPointOfSale() {
-  // product list state
-  const [products] = useState(sampleProducts);
+  const { toasts, showToast, removeToast } = useToast();
+  const [products, setProducts] = useState([]);
+  const [seller, setSeller] = useState({});
+  const [cart, setCart] = useState([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(1);
+  const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [amountPaid, setAmountPaid] = useState("");
+  const [proofModal, setProofModal] = useState(false);
+  const [receipt, setReceipt] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const idempotencyRef = useRef(idempotency());
 
-  // cart state
-  const [cartItems, setCartItems] = useState([]);
-  const [paymentMethod, setPaymentMethod] = useState(paymentMethods[0]);
-  const [showPaymentDropdown, setShowPaymentDropdown] = useState(false);
-  const [cash, setCash] = useState(0);
-  const [transactionDone, setTransactionDone] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await request("/retailer/pos/products/");
+      setProducts(data.products || []);
+      setSeller(data.seller || {});
+    } catch (e) {
+      showToast({ type: "error", title: "Error", message: e?.message || "Unable to load retailer inventory.", duration: 5000 });
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
 
-  // filtering & pagination
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return products.filter((p) => {
-      if (q && !(`${p.name} ${p.sku}`.toLowerCase().includes(q))) return false;
-      if (filter === "in-stock") return p.stockAvailable > 0;
-      if (filter === "low-stock")
-        return p.stockAvailable > 0 && p.stockAvailable < LOW_STOCK_THRESHOLD;
-      return true;
-    });
+    return products.filter((p) => (!q || `${p.name} ${p.variant} ${p.product_code}`.toLowerCase().includes(q)) && (filter === "all" || (filter === "in-stock" ? p.stock_quantity_kg > 0 : p.stock_quantity_kg > 0 && p.stock_quantity_kg < 200)));
   }, [products, query, filter]);
+  const paginated = filtered.slice((page - 1) * 9, page * 9);
+  const total = cart.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const change = Math.max(0, Number(amountPaid || 0) - total);
 
-  const inStockCount = useMemo(
-    () => products.filter((p) => p.stockAvailable > 0).length,
-    [products]
-  );
-  const lowStockCount = useMemo(
-    () =>
-      products.filter(
-        (p) => p.stockAvailable > 0 && p.stockAvailable < LOW_STOCK_THRESHOLD
-      ).length,
-    [products]
-  );
-
-  const totalPages = Math.max(Math.ceil(filtered.length / PRODUCTS_PER_PAGE), 1);
-  const safePage = Math.min(page, totalPages);
-
-  const paginated = useMemo(() => {
-    const start = (safePage - 1) * PRODUCTS_PER_PAGE;
-    return filtered.slice(start, start + PRODUCTS_PER_PAGE);
-  }, [filtered, safePage]);
-
-  const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * PRODUCTS_PER_PAGE + 1;
-  const rangeEnd = Math.min(safePage * PRODUCTS_PER_PAGE, filtered.length);
-
-  // handlers
-  const handleSearchChange = (value) => {
-    setQuery(value);
-    setPage(1);
-  };
-
-  const handleFilterChange = (value) => {
-    setFilter(value);
-    setPage(1);
-  };
-
-  const togglePillFilter = (value) => {
-    setFilter((prev) => (prev === value ? "all" : value));
-    setPage(1);
-  };
-
-  const handleAddToCart = (product) => {
-    setTransactionDone(false);
-    setCartItems((prev) => {
-      const idx = prev.findIndex((it) => it.productId === product.id);
-      if (idx !== -1) {
-        const copy = [...prev];
-        copy[idx] = { ...copy[idx], quantity: copy[idx].quantity + 1 };
-        return copy;
-      }
-      return [
-        ...prev,
-        {
-          id: `ci-${product.id}`,
-          productId: product.id,
-          name: product.name,
-          price: product.price,
-          quantity: 1,
-        },
-      ];
+  const add = (product) => {
+    setCart((items) => {
+      const current = items.find((item) => item.productId === product.id);
+      if (current) return items.map((item) => item.productId === product.id ? { ...item, quantity: Math.min(product.stock_quantity_kg, item.quantity + 1) } : item);
+      return [...items, { productId: product.id, name: product.name, price: product.price, quantity: 1, stock: product.stock_quantity_kg }];
     });
   };
-
-  const handleQuantityChange = (cartId, qty) => {
-    setCartItems((prev) =>
-      prev
-        .map((it) => (it.id === cartId ? { ...it, quantity: qty } : it))
-        .filter((it) => it.quantity > 0)
-    );
+  const updateQuantity = (productId, value) => {
+    const quantity = Number(value);
+    setCart((items) => items.map((item) => item.productId === productId ? { ...item, quantity } : item).filter((item) => item.quantity > 0));
+  };
+  const complete = async (payment = {}) => {
+    if (!cart.length) {
+      showToast({ type: "warning", title: "Warning", message: "Add at least one product to the cart.", duration: 4000 });
+      return;
+    }
+    if (paymentMethod === "Cash" && Number(amountPaid) < total) {
+      showToast({ type: "warning", title: "Warning", message: "Amount paid is insufficient.", duration: 4000 });
+      return;
+    }
+    try {
+      const result = await request("/retailer/pos/checkout/", { method: "POST", headers: { "X-Idempotency-Key": idempotencyRef.current }, body: JSON.stringify({
+        items: cart.map((item) => ({ product_id: item.productId, quantity: item.quantity })),
+        payment_method: paymentMethod, amount_paid: paymentMethod === "Cash" ? Number(amountPaid) : 0,
+        reference_no: payment.referenceNo, payment_proof_image: payment.capturedImage, idempotency_key: idempotencyRef.current,
+      }) });
+      setReceipt({ ...result.receipt, total_amount: result.receipt.total, amount_paid: result.receipt.amount_paid, change_amount: result.receipt.change, payment_method_label: result.receipt.payment_method, seller_name: result.receipt.seller, transaction_date_formatted: new Date().toLocaleString("en-PH"), business_name: "GrainRise Retailer", items: result.receipt.items.map((item) => ({ product_name: item.product_name, quantity_label: `${item.quantity_kg} kg`, unit_price: item.unit_price, subtotal: item.subtotal })) });
+      setCart([]); setAmountPaid(""); setProofModal(false); idempotencyRef.current = idempotency(); await load();
+      showToast({ type: "success", title: "Success", message: "Transaction completed successfully.", duration: 4000 });
+    } catch (e) {
+      showToast({ type: "error", title: "Error", message: e?.response?.data?.message || e?.message || "Unable to complete transaction.", duration: 5000 });
+    }
   };
 
-  const handleRemove = (cartId) =>
-    setCartItems((prev) => prev.filter((it) => it.id !== cartId));
-
-  const handleCompleteTransaction = () => {
-    if (cartItems.length === 0) return;
-    setTransactionDone(true);
-    setCartItems([]);
-    setCash(0);
-  };
-
-  // derived totals
-  const itemCount = useMemo(() => cartItems.reduce((s, it) => s + it.quantity, 0), [cartItems]);
-  const subtotal = useMemo(
-    () => cartItems.reduce((s, it) => s + it.price * it.quantity, 0),
-    [cartItems]
-  );
-  const total = subtotal;
-  const change = Math.max(0, cash - total);
-
-  return (
-    <div className="w-full">
-      {/* Breadcrumb */}
-      <Breadcrumbs
-        items={[
-          { label: "Retailer", path: "/retailer/dashboard" },
-          { label: "Point of Sale" },
-        ]}
-      />
-
-      {/* Page header */}
-      <div className="mb-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Point of Sale</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Browse available inventory products and process walk-in retailer transactions efficiently.
-        </p>
-      </div>
-
-      {/* Success banner */}
-      {transactionDone && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3">
-          <span className="text-emerald-700 font-semibold text-sm">
-            Transaction completed successfully!
-          </span>
-        </div>
-      )}
-
-      <div className="flex flex-col lg:flex-row gap-6">
-        {/* Products Panel */}
-        <div className="flex-1 min-w-0">
-          {/* Search + filter row */}
-          <div className="flex gap-3 mb-4 items-center">
-            <div className="flex-1">
-              <SearchFilter
-                onSearch={handleSearchChange}
-                placeholder="Search product code, variant, or product name"
-              />
-            </div>
-            <SortByDropdown
-              value={filter}
-              onChange={handleFilterChange}
-              options={stockFilterOptions}
-            />
-          </div>
-
-          {/* Stock pill filters */}
-          <div className="flex gap-3 mb-5 flex-wrap">
-            <button
-              type="button"
-              onClick={() => togglePillFilter("in-stock")}
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
-                filter === "in-stock"
-                  ? "bg-emerald-600 text-white"
-                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-              }`}
-            >
-              {inStockCount} Products In Stock
-            </button>
-            <button
-              type="button"
-              onClick={() => togglePillFilter("low-stock")}
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
-                filter === "low-stock"
-                  ? "bg-amber-500 text-white"
-                  : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-              }`}
-            >
-              {lowStockCount} Low Stock Products
-            </button>
-          </div>
-
-          {/* Product grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-            {paginated.map((p) => (
-              <POSProductCard
-                key={p.id}
-                name={p.name}
-                sku={p.sku}
-                price={p.price}
-                unitLabel={p.unitLabel}
-                stockAvailable={p.stockAvailable}
-                onAddToCart={() => handleAddToCart(p)}
-              />
-            ))}
-          </div>
-
-          {/* Empty state */}
-          {paginated.length === 0 && (
-            <div className="mt-8 flex flex-col items-center gap-2 text-slate-400">
-              <span className="text-4xl">No products match your search.</span>
-            </div>
-          )}
-
-          {/* Pagination */}
-          {paginated.length > 0 && (
-            <div className="mt-6">
-              <PaginationControls
-                currentPage={safePage}
-                totalPages={totalPages}
-                onPageChange={setPage}
-                pageLabel={`Showing ${rangeStart}-${rangeEnd} of ${filtered.length} products`}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Cart / Checkout Sidebar */}
-        <aside className="w-full lg:w-[400px] lg:sticky lg:top-20 self-start">
-          <div className="flex max-h-[calc(100vh-6rem)] flex-col rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            {/* Cart header */}
-            <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-slate-100">
-              <h3 className="text-lg font-bold text-slate-900">Current Sale</h3>
-              <span className="rounded-full bg-emerald-700 px-3 py-1 text-xs font-bold text-white">
-                Items: {itemCount}
-              </span>
-            </div>
-
-            {/* Cart item list */}
-            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-              {cartItems.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 py-6 text-slate-400">
-                  <p className="text-sm">No items in cart</p>
-                </div>
-              ) : (
-                cartItems.map((it) => (
-                  <POSCartCard
-                    key={it.id}
-                    name={it.name}
-                    price={it.price}
-                    quantity={it.quantity}
-                    onQuantityChange={(qty) => handleQuantityChange(it.id, qty)}
-                    onRemove={() => handleRemove(it.id)}
-                  />
-                ))
-              )}
-            </div>
-
-            {/* Totals + payment */}
-            <div className="border-t border-slate-100 px-4 py-4 space-y-3">
-              {/* Subtotal */}
-              <div className="flex items-center justify-between text-sm text-slate-600">
-                <span>Subtotal</span>
-                <span>P{subtotal.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span>
-              </div>
-
-              {/* Total */}
-              <div className="flex items-center justify-between">
-                <span className="text-base font-bold text-slate-900">Total</span>
-                <span className="text-base font-bold text-slate-900">
-                  P{total.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-
-              {/* Payment method selector */}
-              <div className="relative">
-                <button
-                  type="button"
-                  id="payment-method-btn"
-                  onClick={() => setShowPaymentDropdown((v) => !v)}
-                  className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-left hover:border-emerald-400 transition"
-                >
-                  <div>
-                    <p className="text-xs text-slate-500">Payment Method</p>
-                    <p className="text-sm font-bold text-slate-900">{paymentMethod}</p>
-                  </div>
-                  <ChevronDown
-                    size={16}
-                    className={`text-slate-400 transition-transform ${showPaymentDropdown ? "rotate-180" : ""}`}
-                  />
-                </button>
-
-                {showPaymentDropdown && (
-                  <ul className="absolute bottom-full left-0 right-0 mb-1 z-20 rounded-md border border-slate-200 bg-white shadow-lg overflow-hidden">
-                    {paymentMethods.map((m) => (
-                      <li key={m}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaymentMethod(m);
-                            setShowPaymentDropdown(false);
-                          }}
-                          className={`w-full px-3 py-2 text-left text-sm transition hover:bg-emerald-50 ${
-                            m === paymentMethod
-                              ? "font-semibold text-emerald-700 bg-emerald-50"
-                              : "text-slate-700"
-                          }`}
-                        >
-                          {m}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              {/* Amount paid input */}
-              <div>
-                <label className="text-xs text-slate-500">Amount Paid</label>
-                <div className="mt-1 flex items-center rounded-md border border-slate-200 px-3 py-2 focus-within:border-emerald-500 transition">
-                  <span className="mr-1 text-slate-500 text-sm">P</span>
-                  <input
-                    id="amount-paid-input"
-                    type="number"
-                    min="0"
-                    value={cash}
-                    onChange={(e) => setCash(Number(e.target.value))}
-                    className="w-full text-right outline-none text-slate-700 text-sm bg-transparent"
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-
-              {/* Change */}
-              <div className="flex items-center justify-between rounded-md bg-emerald-50 px-3 py-3">
-                <span className="text-base font-bold text-slate-900">Change</span>
-                <span className="text-base font-bold text-emerald-700">
-                  P{change.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-
-              {/* Action buttons */}
-              <div className="flex gap-3 pt-1">
-                <button
-                  type="button"
-                  id="clear-cart-btn"
-                  onClick={() => {
-                    setCartItems([]);
-                    setCash(0);
-                    setTransactionDone(false);
-                  }}
-                  className="flex-1 rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
-                >
-                  Clear Cart
-                </button>
-                <CustomGreenButton
-                  text="Complete Transaction"
-                  onClick={handleCompleteTransaction}
-                  className="flex-1 !rounded-md"
-                />
-              </div>
-            </div>
-          </div>
-        </aside>
-      </div>
-    </div>
-  );
+  return <div className="w-full"><Breadcrumbs items={[{ label: "Retailer", path: "/retailer/dashboard" }, { label: "Point of Sale" }]} /><div className="mb-4"><h1 className="text-2xl font-bold">Point of Sale</h1><p className="mt-1 text-sm text-slate-500">Process walk-in kilogram-based transactions.</p></div><div className="flex flex-col gap-6 lg:flex-row"><div className="min-w-0 flex-1"><div className="mb-4 flex gap-3"><div className="flex-1"><SearchFilter onSearch={(v) => { setQuery(v); setPage(1); }} placeholder="Search product code, variant, or product name" /></div><SortByDropdown value={filter} onChange={(v) => { setFilter(v); setPage(1); }} options={stockFilters} /></div><div className="mb-5 flex gap-3"><span className="rounded-full bg-emerald-50 px-4 py-1.5 text-sm font-semibold text-emerald-700">{products.filter((p) => p.stock_quantity_kg >= 200).length} Products In Stock</span><span className="rounded-full bg-amber-50 px-4 py-1.5 text-sm font-semibold text-amber-700">{products.filter((p) => p.stock_quantity_kg > 0 && p.stock_quantity_kg < 200).length} Low Stock Products</span></div>{loading ? <p className="py-12 text-center text-slate-400">Loading inventory...</p> : <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">{paginated.map((p) => <POSProductCard key={p.id} name={p.name} sku={p.product_code} price={p.price} unitLabel="Per kg" stockAvailable={p.stock_quantity_kg} onAddToCart={() => add(p)} />)}</div>}{!loading && !paginated.length && <p className="py-12 text-center text-slate-400">No eligible products match your search.</p>}<div className="mt-6"><PaginationControls currentPage={page} totalPages={Math.max(1, Math.ceil(filtered.length / 9))} onPageChange={setPage} pageLabel={`Showing ${filtered.length ? (page - 1) * 9 + 1 : 0}-${Math.min(page * 9, filtered.length)} of ${filtered.length} products`} /></div></div><aside className="w-full lg:w-[400px]"><div className="rounded-xl border bg-white shadow-sm"><div className="flex justify-between border-b px-4 py-4"><h3 className="text-lg font-bold">Current Sale</h3><span className="rounded-full bg-emerald-700 px-3 py-1 text-xs font-bold text-white">Items: {cart.length}</span></div><div className="space-y-3 px-4 py-3">{cart.length ? cart.map((item) => <POSCartCard key={item.productId} name={item.name} price={item.price} quantity={item.quantity} onQuantityChange={(v) => updateQuantity(item.productId, v)} onRemove={() => updateQuantity(item.productId, 0)} />) : <p className="py-8 text-center text-sm text-slate-400">No items in cart</p>}</div><div className="space-y-3 border-t px-4 py-4"><div className="flex justify-between text-sm"><span>Subtotal</span><span>₱{total.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span></div><div className="flex justify-between font-bold"><span>Total</span><span>₱{total.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span></div><select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="w-full rounded-md border px-3 py-2 text-sm"><option>Cash</option><option>GCash</option><option>Bank Transfer</option></select>{paymentMethod === "Cash" && <><label className="text-xs text-slate-500">Amount Paid<input type="number" min="0" value={amountPaid} onChange={(e) => setAmountPaid(e.target.value)} className="mt-1 w-full rounded-md border px-3 py-2" /></label><div className="flex justify-between rounded-md bg-emerald-50 px-3 py-3 font-bold">Change <span className="text-emerald-700">₱{change.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span></div></>}<div className="flex gap-3"><button type="button" onClick={() => { setCart([]); setAmountPaid(""); }} className="flex-1 rounded-md border px-4 py-2 text-sm">Clear Cart</button><CustomGreenButton text={paymentMethod === "Cash" ? "Complete Transaction" : "Verify Payment"} onClick={() => paymentMethod === "Cash" ? complete() : setProofModal(true)} className="flex-1 !rounded-md" /></div></div></div></aside></div><POSPaymentProofModal isOpen={proofModal} onClose={() => setProofModal(false)} paymentMethod={paymentMethod} totalPayable={total} onCheckDuplicateReference={(referenceNo) => request("/retailer/pos/check-reference/", { method: "POST", body: JSON.stringify({ reference_no: referenceNo }) })} onConfirmPaymentProof={complete} /><POSSalesReceiptModal isOpen={Boolean(receipt)} onClose={() => setReceipt(null)} receiptData={receipt} receiptContextLabel="GrainRise Retailer POS" /><Toast toasts={toasts} removeToast={removeToast} /></div>;
 }

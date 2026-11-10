@@ -17,7 +17,7 @@ import SectionedTableCard from "../../../Components/Minor-Components/SectionedTa
 import Tabs from "../../../Components/Minor-Components/Tabs";
 import useApi from "../../../Components/hooks/useApi";
 import useToast from "../../../Components/hooks/useToast";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 
 // ─── TABS DEFINITION ──────────────────────────────────────────────────────────
 const TABS = [

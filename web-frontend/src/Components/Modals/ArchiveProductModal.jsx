@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createPortal } from "react-dom";
 
 const ArchiveProductModal = ({
@@ -7,6 +8,7 @@ const ArchiveProductModal = ({
   productName = "Product",
   isLoading = false,
 }) => {
+  const [reason, setReason] = useState("");
   if (!isOpen) return null;
 
   return createPortal(
@@ -43,9 +45,16 @@ const ArchiveProductModal = ({
         </h2>
 
         {/* Description */}
-        <p className="text-center text-gray-600 mb-8">
+        <p className="text-center text-gray-600 mb-4">
           Move {productName} to the Archive page? It can be restored anytime.
         </p>
+        <textarea
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          maxLength={500}
+          placeholder="Enter archive reason"
+          className="mb-6 min-h-20 w-full rounded-lg border border-gray-300 p-3 text-sm outline-none focus:border-amber-500"
+        />
 
         {/* Buttons */}
         <div className="flex gap-4">
@@ -59,8 +68,8 @@ const ArchiveProductModal = ({
           </button>
           <button
             type="button"
-            onClick={onArchive}
-            disabled={isLoading}
+            onClick={() => onArchive(reason.trim())}
+            disabled={isLoading || !reason.trim()}
             className="flex-1 px-6 py-2.5 rounded-lg bg-yellow-500 text-white font-medium hover:bg-yellow-600 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm cursor-pointer"
           >
             {isLoading ? "Archiving..." : "Archive"}

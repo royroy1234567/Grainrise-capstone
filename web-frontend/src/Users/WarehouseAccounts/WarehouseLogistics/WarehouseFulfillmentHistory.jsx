@@ -16,7 +16,7 @@ import Breadcrumbs from "../../../Components/Minor-Components/Breadcrumbs";
 import SectionedTableCard from "../../../Components/Minor-Components/SectionedTableCard";
 import useApi from "../../../Components/hooks/useApi";
 import useToast from "../../../Components/hooks/useToast";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 
 // ─── Filter & Sort Configurations ──────────────────────────────────────────
 

@@ -12,6 +12,8 @@ import {
   SwitchCamera,
 } from "lucide-react";
 import Tesseract from "tesseract.js";
+import useToast from "../../hooks/useToast";
+import Toast from "../Toast";
 
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ||
@@ -119,6 +121,7 @@ export default function POSPaymentProofModal({
   onConfirmPaymentProof,
   isSubmitting = false,
 }) {
+  const { toasts, showToast, removeToast } = useToast();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -136,7 +139,6 @@ export default function POSPaymentProofModal({
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [duplicateError, setDuplicateError] = useState("");
   const [isConfirmedCheckbox, setIsConfirmedCheckbox] = useState(false);
-  const [localError, setLocalError] = useState("");
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -155,9 +157,10 @@ export default function POSPaymentProofModal({
       setCameraError("");
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError(
-          "Live camera stream is not supported in this browser. Use the camera capture button below."
-        );
+        const message =
+          "Live camera stream is not supported in this browser. Use the camera capture button below.";
+        setCameraError(message);
+        showToast({ type: "error", title: "Camera Error", message, duration: 5000 });
         return;
       }
 
@@ -187,12 +190,13 @@ export default function POSPaymentProofModal({
         }
       } catch (err) {
         console.warn("Camera access error:", err);
-        setCameraError(
-          "Could not access live camera stream. Please grant camera permission or use the direct camera capture button below."
-        );
+        const message =
+          "Could not access live camera stream. Please grant camera permission or use the direct camera capture button below.";
+        setCameraError(message);
+        showToast({ type: "error", title: "Camera Error", message, duration: 5000 });
       }
     },
-    [facingMode, stopCamera]
+    [facingMode, showToast, stopCamera]
   );
 
   useEffect(() => {
@@ -203,7 +207,6 @@ export default function POSPaymentProofModal({
       setOcrMessage("");
       setDuplicateError("");
       setIsConfirmedCheckbox(false);
-      setLocalError("");
       startCamera("environment");
     } else {
       stopCamera();
@@ -215,7 +218,6 @@ export default function POSPaymentProofModal({
     setIsProcessingOcr(true);
     setOcrStatus("scanning");
     setOcrMessage("Scanning captured receipt for reference number...");
-    setLocalError("");
 
     let worker = null;
     try {
@@ -236,10 +238,11 @@ export default function POSPaymentProofModal({
           try {
             const dupRes = await onCheckDuplicateReference(extracted);
             if (dupRes?.is_duplicate) {
-              setDuplicateError(
+              const message =
                 dupRes.detail ||
-                  `Reference '${extracted}' has already been used for a confirmed payment.`
-              );
+                `Reference '${extracted}' has already been used for a confirmed payment.`;
+              setDuplicateError(message);
+              showToast({ type: "warning", title: "Duplicate Reference", message, duration: 5000 });
             } else {
               setDuplicateError("");
             }
@@ -256,7 +259,9 @@ export default function POSPaymentProofModal({
     } catch (err) {
       console.error("POS OCR Error:", err);
       setOcrStatus("manual");
-      setOcrMessage("OCR scan could not complete. Please type the reference number manually.");
+      const message = "OCR scan could not complete. Please type the reference number manually.";
+      setOcrMessage(message);
+      showToast({ type: "error", title: "OCR Error", message, duration: 5000 });
     } finally {
       if (worker) {
         await worker.terminate().catch(() => {});
@@ -285,7 +290,12 @@ export default function POSPaymentProofModal({
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setLocalError("Please capture a valid image of the payment receipt.");
+      showToast({
+        type: "warning",
+        title: "Invalid Image",
+        message: "Please capture a valid image of the payment receipt.",
+        duration: 4000,
+      });
       return;
     }
     const reader = new FileReader();
@@ -304,7 +314,6 @@ export default function POSPaymentProofModal({
     setOcrMessage("");
     setDuplicateError("");
     setIsConfirmedCheckbox(false);
-    setLocalError("");
     startCamera(facingMode);
   };
 
@@ -337,24 +346,36 @@ export default function POSPaymentProofModal({
   };
 
   const handleSubmitProof = async () => {
-    setLocalError("");
     if (!capturedImage) {
-      setLocalError("Please capture a photo of the customer's payment receipt using the camera.");
+      showToast({
+        type: "warning",
+        title: "Receipt Required",
+        message: "Please capture a photo of the customer's payment receipt using the camera.",
+        duration: 4000,
+      });
       return;
     }
     const cleanRef = referenceNo.replace(/\s+/g, "").toUpperCase();
     if (!cleanRef || cleanRef.length < 4) {
-      setLocalError("Please enter a valid non-empty transaction reference number.");
+      showToast({
+        type: "warning",
+        title: "Reference Required",
+        message: "Please enter a valid non-empty transaction reference number.",
+        duration: 4000,
+      });
       return;
     }
     if (duplicateError) {
-      setLocalError(duplicateError);
+      showToast({ type: "warning", title: "Duplicate Reference", message: duplicateError, duration: 5000 });
       return;
     }
     if (!isConfirmedCheckbox) {
-      setLocalError(
-        "Please explicitly confirm that you have verified the payment receipt and reference number."
-      );
+      showToast({
+        type: "warning",
+        title: "Confirmation Required",
+        message: "Please explicitly confirm that you have verified the payment receipt and reference number.",
+        duration: 4000,
+      });
       return;
     }
 
@@ -367,7 +388,7 @@ export default function POSPaymentProofModal({
             dupRes.detail ||
             `Reference '${cleanRef}' has already been used for a confirmed payment.`;
           setDuplicateError(msg);
-          setLocalError(msg);
+          showToast({ type: "warning", title: "Duplicate Reference", message: msg, duration: 5000 });
           return;
         }
       } finally {
@@ -617,7 +638,6 @@ export default function POSPaymentProofModal({
                   const val = e.target.value.toUpperCase();
                   setReferenceNo(val);
                   setDuplicateError("");
-                  setLocalError("");
                 }}
                 onBlur={handleReferenceBlur}
                 disabled={isProcessingOcr || isSubmitting}
@@ -647,7 +667,6 @@ export default function POSPaymentProofModal({
               checked={isConfirmedCheckbox}
               onChange={(e) => {
                 setIsConfirmedCheckbox(e.target.checked);
-                setLocalError("");
               }}
               disabled={isSubmitting}
               className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-600"
@@ -660,12 +679,6 @@ export default function POSPaymentProofModal({
             </span>
           </label>
 
-          {localError && (
-            <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{localError}</span>
-            </div>
-          )}
         </div>
 
         {/* Modal Footer — shrink-0 so action buttons are always visible */}
@@ -705,6 +718,7 @@ export default function POSPaymentProofModal({
             )}
           </button>
         </div>
+        <Toast toasts={toasts} removeToast={removeToast} />
       </div>
     </div>,
     document.body

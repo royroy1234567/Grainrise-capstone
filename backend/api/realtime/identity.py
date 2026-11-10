@@ -17,7 +17,8 @@ from api.farmer_function.farmer_auth import get_authenticated_farmer
 ROLE_MILLER = "miller_manager"
 ROLE_WAREHOUSE = "warehouse_manager"
 ROLE_FARMER = "farmer"
-REALTIME_ROLES = {ROLE_MILLER, ROLE_WAREHOUSE, ROLE_FARMER}
+ROLE_RETAILER = "retailer"
+REALTIME_ROLES = {ROLE_MILLER, ROLE_WAREHOUSE, ROLE_FARMER, ROLE_RETAILER}
 
 THREAD_ID_RE = re.compile(r"^(supplier|warehouse|user)_(\d{1,18})$")
 
@@ -78,6 +79,13 @@ def get_identity(user_id, role=None):
             "supplier_ids": [],
             "warehouse_ids": [],
         }
+    if role == ROLE_RETAILER:
+        return {
+            "user_id": user_id,
+            "role": ROLE_RETAILER,
+            "supplier_ids": [],
+            "warehouse_ids": [],
+        }
     return None
 
 
@@ -123,13 +131,8 @@ def authenticate_token(token):
         if decoded and decoded.get("auth_source") == "grainrise":
             role = decoded.get("role")
             sub = decoded.get("sub")
-            if role == "retailer" and sub:
-                return {
-                    "user_id": int(sub),
-                    "role": "retailer",
-                    "supplier_ids": [],
-                    "warehouse_ids": [],
-                }
+            if role == ROLE_RETAILER and sub:
+                return get_identity(int(sub), ROLE_RETAILER)
     except Exception:
         pass
 
@@ -195,4 +198,3 @@ def sender_branch_thread_ids(identity, requested_branch_id=None):
 
     candidates.append(f"user_{identity['user_id']}")
     return candidates
-

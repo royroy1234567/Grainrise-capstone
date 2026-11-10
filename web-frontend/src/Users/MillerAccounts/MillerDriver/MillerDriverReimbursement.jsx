@@ -17,7 +17,7 @@ import RichTextEditor from "../../../Components/Minor-Components/RichTextEditor"
 import useAuth from "../../../Components/hooks/useAuth";
 import useApi from "../../../Components/hooks/useApi";
 import useToast from "../../../Components/hooks/useToast";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 
 const CATEGORY_OPTIONS = [
   { label: "Transportation & Travel", value: "Transportation & Travel" },

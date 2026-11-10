@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Breadcrumbs from "../../../Components/Minor-Components/Breadcrumbs";
 import SectionedTableCard from "../../../Components/Minor-Components/SectionedTableCard";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 import useToast from "../../../Components/hooks/useToast";
 import useApi from "../../../Components/hooks/useApi";
 

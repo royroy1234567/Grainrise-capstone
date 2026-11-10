@@ -218,6 +218,12 @@ urlpatterns = [
             "api.warehouse_function.urls"
         ),
     ),
+    path(
+        "retailer/",
+        include(
+            "api.retailer_function.urls"
+        ),
+    ),
 
 
     # MILLER EMPLOYEE FUNCTIONS
@@ -442,4 +448,3 @@ urlpatterns = [
         name="admin-partnership-inquiry-status",
     ),
 ]
-

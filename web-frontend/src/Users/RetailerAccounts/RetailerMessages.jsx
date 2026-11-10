@@ -1,179 +1,201 @@
-import { useState } from "react";
-import { Search, Send, Warehouse, ShieldCheck, Clock, CheckCheck } from "lucide-react";
-import { ArticleMessageContent } from "../../Components/Minor-Components/ArticleAttachmentCard";
+import { useEffect, useRef, useState } from "react";
+import { CheckCheck, Loader2, MessageCircle, Search, Send, ShieldCheck } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import Breadcrumbs from "../../Components/Minor-Components/Breadcrumbs";
+import { ArticleMessageContent } from "../../Components/Minor-Components/ArticleAttachmentCard";
+import ProfanityWarningModal from "../../Components/Modals/ProfanityWarningModal";
+import useRetailerMessages from "../../Components/hooks/Retailer/useRetailerMessages";
 
-const CHAT_CONTACTS = [
-  { id: 1, name: "Central Bulacan Regional Warehouse", role: "Warehouse Manager", lastMsg: "Your batch WR-001 has been dispatched.", time: "10:30 AM", unread: 1, online: true },
-  { id: 2, name: "Isabela Grain Hub Dispatch", role: "Logistics Coordinator", lastMsg: "Payment verification received for Order #882.", time: "Yesterday", unread: 0, online: false },
-  { id: 3, name: "GrainRise Support Desk", role: "Admin Support", lastMsg: "Your return ticket #RT-402 is under review.", time: "Aug 28", unread: 0, online: true },
-];
+const getInitials = (name) =>
+  String(name || "User")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "U";
 
-const MOCK_MESSAGES = {
-  1: [
-    { id: 1, sender: "them", text: "Good morning! Regarding your bulk Dinorado procurement order #PO-902.", time: "10:15 AM" },
-    { id: 2, sender: "me", text: "Hello! Has the delivery truck been assigned for this afternoon?", time: "10:20 AM" },
-    { id: 3, sender: "them", text: "Yes! Truck plate NBD-3491 is loaded with 480 kg and en route now. ETA 02:30 PM.", time: "10:30 AM" },
-  ],
-  2: [
-    { id: 1, sender: "them", text: "Payment verification received for Order #882. Goods will be dispatched on Friday.", time: "Yesterday" },
-  ],
-  3: [
-    { id: 1, sender: "them", text: "Your return ticket #RT-402 is under review with the inspection team.", time: "Aug 28" },
-  ],
+const formatTimestamp = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) {
+    return new Intl.DateTimeFormat("en-PH", { hour: "numeric", minute: "2-digit" }).format(date);
+  }
+  return new Intl.DateTimeFormat("en-PH", { month: "short", day: "numeric" }).format(date);
 };
 
 export default function RetailerMessages() {
-  const [selectedContact, setSelectedContact] = useState(CHAT_CONTACTS[0]);
-  const [messages, setMessages] = useState(MOCK_MESSAGES);
-  const [inputText, setInputText] = useState("");
+  const {
+    threads,
+    activeThread,
+    messages,
+    isThreadsLoading,
+    isMessagesLoading,
+    isSending,
+    threadsError,
+    messagesError,
+    sendError,
+    loadThreads,
+    selectThread,
+    sendMessage,
+    clearSendError,
+    isPartnerTyping,
+    emitTyping,
+    stopTyping,
+  } = useRetailerMessages();
+  const location = useLocation();
   const [search, setSearch] = useState("");
+  const [inputText, setInputText] = useState("");
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [profanity, setProfanity] = useState({ isOpen: false, message: "", detectedWords: [] });
+  const endRef = useRef(null);
+  const openedTargetRef = useRef("");
 
-  const handleSend = () => {
-    if (!inputText.trim()) return;
-    const newMsg = {
-      id: Date.now(),
-      sender: "me",
-      text: inputText.trim(),
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
+  useEffect(() => {
+    const timer = window.setTimeout(() => loadThreads(search).catch(() => {}), search ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadThreads, search]);
 
-    setMessages((prev) => ({
-      ...prev,
-      [selectedContact.id]: [...(prev[selectedContact.id] || []), newMsg],
-    }));
+  useEffect(() => {
+    if (!activeThread && threads[0] && !location.state) {
+      selectThread(threads[0], true).catch(() => {});
+    }
+  }, [activeThread, location.state, selectThread, threads]);
+
+  useEffect(() => {
+    const target = location.state;
+    if (!target) return;
+    const participantType = target.participant_type || target.participantType;
+    const participantId = target.participant_id || target.recipientId;
+    if (!participantType || !participantId) return;
+    const targetKey = target.thread_id || `${participantType}_${participantId}`;
+    if (openedTargetRef.current === targetKey) return;
+    openedTargetRef.current = targetKey;
+    selectThread({
+      thread_id: targetKey,
+      participant_type: participantType,
+      participant_id: participantId,
+      name: target.name || target.recipientName || "Contact",
+      role: target.role || "Contact",
+      subtitle: target.subtitle || target.role || "Contact",
+    }).catch(() => {});
+  }, [location.state, selectThread]);
+
+  useEffect(() => {
+    if (!activeThread || isMessagesLoading) return;
+    const timer = window.setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    return () => window.clearTimeout(timer);
+  }, [activeThread, isMessagesLoading, messages]);
+
+  const handleSelect = (thread) => {
+    stopTyping();
+    clearSendError();
     setInputText("");
+    setReplyingTo(null);
+    selectThread(thread).catch(() => {});
   };
 
-  const filteredContacts = CHAT_CONTACTS.filter((c) =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.role.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const activeMessages = messages[selectedContact.id] || [];
+  const handleSend = async (event) => {
+    event.preventDefault();
+    const text = inputText.trim();
+    if (!text || isSending) return;
+    const reply = replyingTo;
+    setInputText("");
+    setReplyingTo(null);
+    try {
+      await sendMessage(text, reply);
+    } catch (error) {
+      const data = error?.data || {};
+      if (data.code === "PROFANITY_DETECTED" || data.blocked || error?.code === "PROFANITY_DETECTED") {
+        setInputText(text);
+        setReplyingTo(reply);
+        setProfanity({
+          isOpen: true,
+          message: data.message || error.message,
+          detectedWords: data.detected_words || data.matches || [],
+        });
+      }
+    }
+  };
 
   return (
     <div className="space-y-4">
       <Breadcrumbs items={[{ label: "Support" }, { label: "Messages" }]} />
-
-      <div className="mb-2">
+      <div>
         <h2 className="text-[clamp(2rem,3vw,2.5rem)] font-extrabold tracking-[-0.03em] text-slate-900">
           Messages &amp; Inquiries
         </h2>
-        <p className="text-sm text-slate-500">
-          Communicate directly with warehouse logistics coordinators and platform support.
-        </p>
+        <p className="text-sm text-slate-500">Communicate directly with registered GrainRise partners.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-3 min-h-[560px]">
-        {/* Contact List */}
-        <div className="border-r border-slate-200 p-4 space-y-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search contacts..."
-              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-xs focus:ring-1 focus:ring-emerald-600 outline-none"
-            />
+      <div className="grid min-h-[680px] grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[360px_1fr]">
+        <aside className="flex max-h-[330px] flex-col border-b border-slate-200 lg:max-h-none lg:border-b-0 lg:border-r">
+          <div className="border-b border-slate-200 p-4">
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations..." className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2.5 pl-9 pr-3 text-xs outline-none focus:border-[#0B5D1E] focus:ring-1 focus:ring-[#0B5D1E]" />
+            </div>
           </div>
-
-          <div className="space-y-1 overflow-y-auto max-h-[460px]">
-            {filteredContacts.map((contact) => {
-              const isSelected = selectedContact.id === contact.id;
-
+          <div className="flex-1 overflow-y-auto">
+            {isThreadsLoading && !threads.length ? (
+              <div className="flex min-h-52 items-center justify-center"><Loader2 className="animate-spin text-[#0B5D1E]" size={22} /></div>
+            ) : threadsError ? (
+              <p className="p-5 text-center text-xs text-red-600">{threadsError}</p>
+            ) : !threads.length ? (
+              <div className="flex min-h-52 flex-col items-center justify-center p-6 text-center text-slate-400"><MessageCircle size={28} /><p className="mt-2 text-xs">No conversations yet.</p></div>
+            ) : threads.map((thread) => {
+              const selected = activeThread?.thread_id === thread.thread_id;
               return (
-                <button
-                  key={contact.id}
-                  onClick={() => setSelectedContact(contact)}
-                  className={`w-full text-left p-3 rounded-xl transition flex items-start gap-3 cursor-pointer ${
-                    isSelected ? "bg-emerald-50 border border-emerald-200" : "hover:bg-gray-50 border border-transparent"
-                  }`}
-                >
-                  <div className="relative shrink-0">
-                    <div className="w-10 h-10 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-sm">
-                      {contact.name[0]}
-                    </div>
-                    {contact.online && (
-                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></span>
-                    )}
+                <button key={thread.thread_id} type="button" onClick={() => handleSelect(thread)} className={`flex w-full items-start gap-3 border-b border-slate-100 p-4 text-left ${selected ? "bg-emerald-50/70" : "hover:bg-slate-50"}`}>
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${selected ? "bg-[#0B5D1E] text-white" : "bg-slate-100 text-slate-600"}`}>{getInitials(thread.name)}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex justify-between gap-2"><p className="truncate text-sm font-semibold text-slate-900">{thread.name}</p><span className="shrink-0 text-[10px] text-slate-400">{formatTimestamp(thread.latest_message_at)}</span></div>
+                    <p className="truncate text-xs text-slate-500">{thread.subtitle || thread.role}</p>
+                    <p className={`mt-2 truncate text-xs ${thread.unread_count ? "font-semibold text-slate-800" : "text-slate-500"}`}>{thread.is_sender_me ? "You: " : ""}{thread.latest_message}</p>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-baseline mb-0.5">
-                      <p className="font-bold text-gray-900 text-xs truncate">{contact.name}</p>
-                      <span className="text-[10px] text-gray-400 shrink-0">{contact.time}</span>
-                    </div>
-                    <p className="text-[11px] text-gray-500 font-medium truncate mb-1">{contact.role}</p>
-                    <p className="text-[11px] text-gray-600 truncate">{contact.lastMsg}</p>
-                  </div>
+                  {!!thread.unread_count && !selected && <span className="rounded-full bg-[#0B5D1E] px-1.5 py-0.5 text-[9px] font-bold text-white">{thread.unread_count}</span>}
                 </button>
               );
             })}
           </div>
-        </div>
+        </aside>
 
-        {/* Chat Pane (2 cols) */}
-        <div className="md:col-span-2 flex flex-col justify-between h-full bg-slate-50/50">
-          {/* Chat Header */}
-          <div className="p-4 bg-white border-b border-slate-200 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-sm">
-                {selectedContact.name[0]}
+        <section className="flex min-h-[500px] flex-col bg-slate-50/50">
+          {activeThread ? (
+            <>
+              <header className="flex items-center gap-3 border-b border-slate-200 bg-white p-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-700 text-sm font-bold text-white">{getInitials(activeThread.name)}</div>
+                <div><h3 className="text-sm font-bold text-gray-900">{activeThread.name}</h3><p className="flex items-center gap-1 text-xs font-medium text-emerald-700"><ShieldCheck size={13} />{activeThread.role || "Contact"}</p></div>
+              </header>
+              <div className="flex-1 overflow-y-auto p-5">
+                {isMessagesLoading ? <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-[#0B5D1E]" size={22} /></div> : messagesError ? <p className="text-center text-xs text-red-600">{messagesError}</p> : messages.map((message) => (
+                  <div key={message.message_id} className={`mb-3 flex flex-col ${message.is_mine ? "items-end" : "items-start"}`}>
+                    {message.replied_message && <button type="button" onClick={() => setReplyingTo(message.replied_message)} className="mb-1 max-w-[80%] truncate rounded-lg bg-slate-100 px-3 py-1 text-left text-[10px] text-slate-500">Replying to: {message.replied_message.message_content}</button>}
+                    <button type="button" onClick={() => setReplyingTo(message)} className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-left text-sm ${message.is_mine ? "rounded-br-none bg-emerald-700 text-white" : "rounded-bl-none border border-slate-200 bg-white text-gray-800 shadow-xs"}`}>
+                      <ArticleMessageContent content={message.message_content || message.message_text} isMine={message.is_mine} className="leading-relaxed" />
+                    </button>
+                    <span className="mt-1 flex items-center gap-1 px-1 text-[10px] text-gray-400">{formatTimestamp(message.created_at)} {message.is_mine && <CheckCheck size={12} />}</span>
+                  </div>
+                ))}
+                {isPartnerTyping && <p className="text-xs italic text-slate-400">Typing...</p>}
+                <div ref={endRef} />
               </div>
-              <div>
-                <h3 className="font-bold text-gray-900 text-sm">{selectedContact.name}</h3>
-                <p className="text-xs text-emerald-700 font-medium flex items-center gap-1">
-                  <ShieldCheck size={13} /> {selectedContact.role}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Chat History */}
-          <div className="flex-1 p-5 overflow-y-auto space-y-3">
-            {activeMessages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex flex-col ${msg.sender === "me" ? "items-end" : "items-start"}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
-                    msg.sender === "me"
-                      ? "bg-emerald-700 text-white rounded-br-none"
-                      : "bg-white border border-slate-200 text-gray-800 rounded-bl-none shadow-xs"
-                  }`}
-                >
-                  <ArticleMessageContent content={msg.text} isMine={msg.sender === "me"} className="leading-relaxed" />
+              <form onSubmit={handleSend} className="border-t border-slate-200 bg-white p-4">
+                {replyingTo && <div className="mb-2 flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800"><span className="truncate">Replying to: {replyingTo.message_content}</span><button type="button" onClick={() => setReplyingTo(null)}>Cancel</button></div>}
+                {sendError && <p className="mb-2 text-xs text-red-600">{sendError}</p>}
+                <div className="flex gap-2">
+                  <input value={inputText} onChange={(e) => { setInputText(e.target.value); emitTyping(e.target.value); }} onBlur={stopTyping} placeholder={`Message ${activeThread.name}...`} className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none focus:ring-1 focus:ring-emerald-600" />
+                  <button disabled={isSending || !inputText.trim()} className="rounded-xl bg-emerald-700 px-4 text-white disabled:opacity-50"><Send size={16} /></button>
                 </div>
-                <span className="text-[10px] text-gray-400 mt-1 px-1 flex items-center gap-1">
-                  {msg.time} {msg.sender === "me" && <CheckCheck size={12} className="text-emerald-600" />}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {/* Chat Input */}
-          <div className="p-4 bg-white border-t border-slate-200">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder={`Message ${selectedContact.name}...`}
-                className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-1 focus:ring-emerald-600 outline-none"
-              />
-              <button
-                onClick={handleSend}
-                className="bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl px-5 py-2.5 text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Send size={15} /> Send
-              </button>
-            </div>
-          </div>
-        </div>
+              </form>
+            </>
+          ) : <div className="flex flex-1 flex-col items-center justify-center text-slate-400"><MessageCircle size={34} /><p className="mt-2 text-sm">Select a conversation to start messaging.</p></div>}
+        </section>
       </div>
+      <ProfanityWarningModal isOpen={profanity.isOpen} onClose={() => setProfanity((prev) => ({ ...prev, isOpen: false }))} message={profanity.message} detectedWords={profanity.detectedWords} />
     </div>
   );
 }

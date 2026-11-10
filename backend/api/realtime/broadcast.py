@@ -17,7 +17,7 @@ import logging
 from asgiref.sync import async_to_sync
 from django.db import connection, transaction
 
-from .identity import ROLE_MILLER, ROLE_WAREHOUSE, ROLE_FARMER, get_identity
+from .identity import ROLE_MILLER, ROLE_WAREHOUSE, ROLE_FARMER, ROLE_RETAILER, get_identity
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,17 @@ def _thread_for(identity, row):
             return f"user_{o_u}", is_mine
         return None, is_mine
 
+    if identity["role"] == ROLE_RETAILER:
+        is_mine = (s_u == uid)
+        o_wh, o_sp, o_u = (r_wh, r_sp, r_u) if is_mine else (s_wh, s_sp, s_u)
+        if o_sp:
+            return f"supplier_{o_sp}", is_mine
+        if o_wh:
+            return f"warehouse_{o_wh}", is_mine
+        if o_u and o_u != uid:
+            return f"user_{o_u}", is_mine
+        return None, is_mine
+
     return None, False
 
 
@@ -166,6 +177,8 @@ def _publish_message_created(message_id):
             mine_type = "warehouse"
         elif ident["role"] == ROLE_FARMER:
             mine_type = "farmer"
+        elif ident["role"] == ROLE_RETAILER:
+            mine_type = "retailer"
         else:
             mine_type = "user"
 
@@ -286,4 +299,3 @@ def broadcast_messages_seen(message_ids):
 
 def publish_typing(target_user_id, payload):
     _send([(user_group(target_user_id), payload)])
-

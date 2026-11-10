@@ -3,7 +3,7 @@ import { Search, ChevronDown, RefreshCw } from "lucide-react";
 import Breadcrumbs from "../../../Components/Minor-Components/Breadcrumbs";
 import DateRangePicker from "../../../Components/Minor-Components/DateRangePicker";
 import SectionedTableCard from "../../../Components/Minor-Components/SectionedTableCard";
-import Toast from "../../../Components/Minor-Components/Toast";
+import Toast from "../../../Components/Modals/Toast";
 import useToast from "../../../Components/hooks/useToast";
 import DriverSubmitPaymentModal from "../../../Components/Modals/MillerDriver/DriverSubmitPaymentModal";
 import DriverPOSReceiptModal from "../../../Components/Modals/MillerDriver/DriverPOSReceiptModal";

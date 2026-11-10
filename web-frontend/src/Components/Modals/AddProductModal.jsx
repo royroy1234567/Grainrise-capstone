@@ -8,7 +8,7 @@ import CustomTextbox from "../Minor-Components/CustomTextbox";
 import CustomGreenButton from "../Minor-Components/CustomGreenButton";
 import RichTextEditor from "../Minor-Components/RichTextEditor";
 
-export default function AddProductModal({ isOpen, onClose, onSave }) {
+export default function AddProductModal({ isOpen, onClose, onSave, supplierFreeText = false }) {
   const [formData, setFormData] = useState({
     variant: "",
     productCode: "BATCH 2026 - 001",
@@ -19,6 +19,7 @@ export default function AddProductModal({ isOpen, onClose, onSave }) {
     arrivalDate: "",
     stockQuantity: "",
     unitCost: "",
+    sellingPrice: "",
     expirationDate: "",
     descriptionHtml: "",
     descriptionText: "",
@@ -103,16 +104,25 @@ export default function AddProductModal({ isOpen, onClose, onSave }) {
                 />
               </div>
 
-              <Dropdown
-                label="Supplier *"
-                placeholder="Select supplier"
-                options={[
-                  { label: "AgriCorp Farms", value: "agricorp" },
-                  { label: "Golden Grain Co.", value: "goldengrain" },
-                ]}
-                value={formData.supplier}
-                onChange={(val) => handleInputChange("supplier", val)}
-              />
+              {supplierFreeText ? (
+                <CustomTextbox
+                  label="Supplier Name *"
+                  placeholder="Enter supplier name"
+                  value={formData.supplier}
+                  onChange={(e) => handleInputChange("supplier", e.target.value)}
+                />
+              ) : (
+                <Dropdown
+                  label="Supplier *"
+                  placeholder="Select supplier"
+                  options={[
+                    { label: "AgriCorp Farms", value: "agricorp" },
+                    { label: "Golden Grain Co.", value: "goldengrain" },
+                  ]}
+                  value={formData.supplier}
+                  onChange={(val) => handleInputChange("supplier", val)}
+                />
+              )}
 
               {/* Custom Image Upload */}
               <div>
@@ -206,6 +216,18 @@ export default function AddProductModal({ isOpen, onClose, onSave }) {
                     onChange={(e) => handleInputChange("unitCost", e.target.value)}
                     className="w-full px-3 py-2 text-xs text-gray-700 border-none outline-none"
                   />
+                </div>
+
+                <div>
+                  <label className="block mb-1.5 font-medium text-gray-700">
+                    Selling Price (₱/kg) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white focus-within:border-emerald-500 h-[38px]">
+                    <span className="bg-gray-100 text-gray-500 text-xs px-3 flex items-center border-r border-gray-200 font-medium">₱</span>
+                    <input type="number" min="0" step="0.01" placeholder="0.00" value={formData.sellingPrice}
+                      onChange={(e) => handleInputChange("sellingPrice", e.target.value)}
+                      className="w-full px-3 py-2 text-xs text-gray-700 border-none outline-none" />
+                  </div>
                 </div>
               </div>
 

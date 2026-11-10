@@ -2,10 +2,6 @@ import { useCallback, useRef, useState } from "react";
 import useApi from "../useApi";
 import useRealtimeMessages from "../useRealtimeMessages";
 
-const CACHE_KEY_THREADS = "grainrise_farmer_threads";
-const CACHE_KEY_ACTIVE_THREAD = "grainrise_farmer_active_thread";
-const CACHE_KEY_MESSAGES_PREFIX = "grainrise_farmer_msgs_";
-
 function getCachedJson(key, fallback) {
   try {
     const val = sessionStorage.getItem(key);
@@ -21,16 +17,23 @@ function setCachedJson(key, value) {
   } catch {}
 }
 
-export default function useFarmerMessages() {
+export default function useFarmerMessages({
+  apiPrefix = "/farmer",
+  cacheNamespace = "farmer",
+  senderType = "farmer",
+} = {}) {
   const { request } = useApi();
+  const cacheKeyThreads = `grainrise_${cacheNamespace}_threads`;
+  const cacheKeyActiveThread = `grainrise_${cacheNamespace}_active_thread`;
+  const cacheKeyMessagesPrefix = `grainrise_${cacheNamespace}_msgs_`;
 
   // Instant SWR state initialization from session storage
-  const [threads, setThreads] = useState(() => getCachedJson(CACHE_KEY_THREADS, []));
-  const [activeThread, setActiveThread] = useState(() => getCachedJson(CACHE_KEY_ACTIVE_THREAD, null));
+  const [threads, setThreads] = useState(() => getCachedJson(cacheKeyThreads, []));
+  const [activeThread, setActiveThread] = useState(() => getCachedJson(cacheKeyActiveThread, null));
   const [messages, setMessages] = useState(() => {
-    const initThread = getCachedJson(CACHE_KEY_ACTIVE_THREAD, null);
+    const initThread = getCachedJson(cacheKeyActiveThread, null);
     if (initThread && initThread.thread_id) {
-      return getCachedJson(`${CACHE_KEY_MESSAGES_PREFIX}${initThread.thread_id}`, []);
+      return getCachedJson(`${cacheKeyMessagesPrefix}${initThread.thread_id}`, []);
     }
     return [];
   });
@@ -56,7 +59,7 @@ export default function useFarmerMessages() {
   const { typingMap, connected: realtimeConnected, emitTyping, stopTyping } =
     useRealtimeMessages({
       request,
-      apiPrefix: "/farmer",
+      apiPrefix,
       activeThreadRef,
       threadsRef,
       setThreads,
@@ -71,12 +74,12 @@ export default function useFarmerMessages() {
       if (!thread) return;
 
       setActiveThread(thread);
-      setCachedJson(CACHE_KEY_ACTIVE_THREAD, thread);
+      setCachedJson(cacheKeyActiveThread, thread);
 
       // Check cache first for instant 0ms display
       const cached =
         messagesCacheRef.current[thread.thread_id] ||
-        getCachedJson(`${CACHE_KEY_MESSAGES_PREFIX}${thread.thread_id}`, null);
+        getCachedJson(`${cacheKeyMessagesPrefix}${thread.thread_id}`, null);
 
       if (cached && Array.isArray(cached) && cached.length > 0) {
         setMessages(cached);
@@ -90,14 +93,14 @@ export default function useFarmerMessages() {
 
       try {
         const res = await request(
-          `/farmer/messages/conversation/?thread_id=${encodeURIComponent(thread.thread_id)}`
+          `${apiPrefix}/messages/conversation/?thread_id=${encodeURIComponent(thread.thread_id)}`
         );
 
         if (res && res.success && res.data) {
           const freshList = Array.isArray(res.data.messages) ? res.data.messages : [];
           setMessages(freshList);
           messagesCacheRef.current[thread.thread_id] = freshList;
-          setCachedJson(`${CACHE_KEY_MESSAGES_PREFIX}${thread.thread_id}`, freshList);
+          setCachedJson(`${cacheKeyMessagesPrefix}${thread.thread_id}`, freshList);
 
           if (res.data.thread) {
             setActiveThread((prev) => {
@@ -106,7 +109,7 @@ export default function useFarmerMessages() {
                 ...res.data.thread,
                 unread_count: 0,
               };
-              setCachedJson(CACHE_KEY_ACTIVE_THREAD, updated);
+              setCachedJson(cacheKeyActiveThread, updated);
               return updated;
             });
           }
@@ -116,7 +119,7 @@ export default function useFarmerMessages() {
             const updated = prevThreads.map((t) =>
               t.thread_id === thread.thread_id ? { ...t, unread_count: 0 } : t
             );
-            setCachedJson(CACHE_KEY_THREADS, updated);
+            setCachedJson(cacheKeyThreads, updated);
             return updated;
           });
         } else {
@@ -133,7 +136,7 @@ export default function useFarmerMessages() {
         setIsMessagesLoading(false);
       }
     },
-    [request]
+    [apiPrefix, cacheKeyActiveThread, cacheKeyMessagesPrefix, cacheKeyThreads, request]
   );
 
   // Load Conversation Threads (With Instant Cache & Auto-select)
@@ -147,13 +150,13 @@ export default function useFarmerMessages() {
 
       try {
         const query = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : "";
-        const res = await request(`/farmer/messages/threads/${query}`);
+        const res = await request(`${apiPrefix}/messages/threads/${query}`);
 
         if (res && res.success) {
           const list = Array.isArray(res.data) ? res.data : [];
           setThreads(list);
           if (!searchTerm) {
-            setCachedJson(CACHE_KEY_THREADS, list);
+            setCachedJson(cacheKeyThreads, list);
           }
 
           // Auto-select first conversation if none selected yet
@@ -181,7 +184,7 @@ export default function useFarmerMessages() {
         setIsThreadsLoading(false);
       }
     },
-    [request, selectThread]
+    [apiPrefix, cacheKeyThreads, request, selectThread]
   );
 
   // Refresh Currently Active Thread
@@ -194,14 +197,14 @@ export default function useFarmerMessages() {
 
     try {
       const res = await request(
-        `/farmer/messages/conversation/?thread_id=${encodeURIComponent(thread.thread_id)}`
+        `${apiPrefix}/messages/conversation/?thread_id=${encodeURIComponent(thread.thread_id)}`
       );
 
       if (res && res.success && res.data) {
         const freshList = Array.isArray(res.data.messages) ? res.data.messages : [];
         setMessages(freshList);
         messagesCacheRef.current[thread.thread_id] = freshList;
-        setCachedJson(`${CACHE_KEY_MESSAGES_PREFIX}${thread.thread_id}`, freshList);
+        setCachedJson(`${cacheKeyMessagesPrefix}${thread.thread_id}`, freshList);
 
         if (res.data.thread) {
           setActiveThread((prev) => ({
@@ -216,7 +219,7 @@ export default function useFarmerMessages() {
     } finally {
       setIsMessagesLoading(false);
     }
-  }, [request]);
+  }, [apiPrefix, cacheKeyMessagesPrefix, request]);
 
   // Send a Message (with immediate optimistic UI)
   const sendMessage = useCallback(
@@ -250,7 +253,7 @@ export default function useFarmerMessages() {
 
       const optimisticMsg = {
         message_id: tempId,
-        sender_type: "farmer",
+        sender_type: senderType,
         sender_name: "You",
         is_mine: true,
         is_sending: true,
@@ -301,7 +304,7 @@ export default function useFarmerMessages() {
           replied_to_message_id: repliedToId || null,
         };
 
-        const res = await request("/farmer/messages/send/", {
+        const res = await request(`${apiPrefix}/messages/send/`, {
           method: "POST",
           body: payload,
         });
@@ -309,7 +312,7 @@ export default function useFarmerMessages() {
         if (res && res.success && res.data) {
           const newMsg = {
             ...res.data,
-            sender_type: "farmer",
+            sender_type: senderType,
             sender_name: "You",
             is_mine: true,
             is_sending: false,
@@ -353,7 +356,7 @@ export default function useFarmerMessages() {
         setIsSending(false);
       }
     },
-    [request, stopTyping]
+    [apiPrefix, senderType, request, stopTyping]
   );
 
   const clearSendError = useCallback(() => {
